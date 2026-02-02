@@ -27,16 +27,16 @@ Reusable GitHub Actions workflows that support OpenTofu/Terraform module automat
 | --- | --- | --- |
 | [branch-validation](#branch-validation) | 🔍 CI & Validation | Validates branch names against a regex pattern |
 | [changelog-release](#changelog-and-release) | 📦 Release & Changelog | Generates changelog and creates a new release |
-| [conventional-commit](#conventional-commit) | 🔍 CI & Validation | Validates commit messages against conventional commit rules |
+| [conventional-commit](#conventional-commit) | 🔍 CI & Validation | Validates commits against conventional commit rules |
 | [docker-build-push-ecr](#docker-build-and-push-to-ecr) | 🚀 Build & Deploy | Builds and pushes a Docker image to ECR |
 | [docker-security-scan](#docker-security-scan) | 🔒 Security | Scans a Docker image for security vulnerabilities |
 | [ecr-security-scan](#ecr-security-scan) | 🔒 Security | Scans ECR images for security vulnerabilities |
-| [pre-release](#tofu-pre-release) | 📦 Release & Changelog | Creates a pre-release and generates a changelog preview comment |
-| [readme-ai-generator-v2](#readme-ai-generator-v2) | 📚 Documentation | Generates README files using AI |
+| [pre-release](#tofu-pre-release) | 📦 Release & Changelog | Creates a pre-release and posts a changelog preview comment |
+| [readme-ai-v2](#readme-ai-generator-v2) | 📚 Documentation | Generates README files using AI |
 | [release](#tofu-release) | 📦 Release & Changelog | Creates a new release and updates README versions |
 | [tf-docs](#tofu-docs) | 📚 Documentation | Generates Terraform documentation |
-| [tfsec-security-scan](#tfsec-security-scan) | 🔒 Security | Scans Terraform files for security vulnerabilities |
-| [tofu-lint](#tofu-lint) | 🔍 CI & Validation | Lints OpenTofu configuration |
+| [tfsec](#tfsec-security-scan) | 🔒 Security | Scans Terraform code for security vulnerabilities |
+| [tofu-lint](#tofu-lint) | 🔍 CI & Validation | Lints OpenTofu code |
 | [tofu-test](#tofu-test) | 🔍 CI & Validation | Tests OpenTofu modules |
 | [update-readme-actions](#update-readme-actions) | 📚 Documentation | Updates the README with available actions |
 
@@ -58,7 +58,7 @@ with:
 ```
 
 ### conventional-commit
-Validates commit messages against conventional commit rules. Use this workflow to enforce consistent commit message formatting.
+Validates commits against conventional commit rules. Use this workflow to enforce consistent commit messages.
 
 **Usage**
 ```yml
@@ -66,7 +66,7 @@ uses: nullplatform/actions-nullplatform/.github/workflows/conventional-commit.ym
 ```
 
 ### tofu-lint
-Lints OpenTofu configuration. Use this workflow to ensure consistent and valid OpenTofu configuration.
+Lints OpenTofu code. Use this workflow to enforce coding standards and best practices.
 
 **Usage**
 ```yml
@@ -74,7 +74,7 @@ uses: nullplatform/actions-nullplatform/.github/workflows/tofu-lint.yml@main
 ```
 
 ### tofu-test
-Tests OpenTofu modules. Use this workflow to ensure that OpenTofu modules are functioning correctly.
+Tests OpenTofu modules. Use this workflow to ensure that your modules are working as expected.
 
 **Inputs**
 
@@ -93,7 +93,7 @@ with:
 
 ## 🔒 Security
 ### docker-security-scan
-Scans a Docker image for security vulnerabilities. Use this workflow to ensure that your Docker images are secure.
+Scans a Docker image for security vulnerabilities. Use this workflow to identify potential security risks in your Docker images.
 
 **Inputs**
 
@@ -119,7 +119,7 @@ with:
 ```
 
 ### ecr-security-scan
-Scans ECR images for security vulnerabilities. Use this workflow to ensure that your ECR images are secure.
+Scans ECR images for security vulnerabilities. Use this workflow to identify potential security risks in your ECR images.
 
 **Inputs**
 
@@ -128,7 +128,6 @@ Scans ECR images for security vulnerabilities. Use this workflow to ensure that 
 | image_names | JSON array of image names to scan | true |  |
 | ecr_registry | ECR registry URL | false | `public.ecr.aws/nullplatform` |
 | severity | Minimum severity to report | false | `CRITICAL,HIGH` |
-| aws_region | AWS region for ECR | false | `us-east-1` |
 
 **Secrets required**
 
@@ -142,14 +141,13 @@ with:
   image_names: '["image1", "image2"]'
   ecr_registry: public.ecr.aws/nullplatform
   severity: CRITICAL,HIGH
-  aws_region: us-east-1
 secrets:
   aws_role_arn: ${{ secrets.AWS_ROLE_ARN }}
   slack_webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
 ```
 
-### tfsec-security-scan
-Scans Terraform files for security vulnerabilities. Use this workflow to ensure that your Terraform configuration is secure.
+### tfsec
+Scans Terraform code for security vulnerabilities. Use this workflow to identify potential security risks in your Terraform code.
 
 **Inputs**
 
@@ -161,7 +159,7 @@ Scans Terraform files for security vulnerabilities. Use this workflow to ensure 
 
 **Usage**
 ```yml
-uses: nullplatform/actions-nullplatform/.github/workflows/tfsec-security-scan.yml@main
+uses: nullplatform/actions-nullplatform/.github/workflows/tfsec.yml@main
 with:
   minimum_severity: HIGH
   upload_sarif: true
@@ -170,7 +168,7 @@ with:
 
 ## 🚀 Build & Deploy
 ### docker-build-push-ecr
-Builds and pushes a Docker image to ECR. Use this workflow to build and deploy your Docker images.
+Builds and pushes a Docker image to ECR. Use this workflow to automate the build and deployment of your Docker images.
 
 **Inputs**
 
@@ -205,7 +203,7 @@ secrets:
 
 ## 📦 Release & Changelog
 ### changelog-release
-Generates changelog and creates a new release. Use this workflow to automate your release process.
+Generates changelog and creates a new release. Use this workflow to automate the creation of changelogs and releases.
 
 **Inputs**
 
@@ -224,14 +222,14 @@ uses: nullplatform/actions-nullplatform/.github/workflows/changelog-release.yml@
 with:
   project-type: generic
   source-dir: .
-  version-file: VERSION
+  version-file: Chart.yaml
   tag-prefix: v
   create-github-release: true
   commit-message: chore(release): bump version and update changelog [skip ci]
 ```
 
 ### pre-release
-Creates a pre-release and generates a changelog preview comment. Use this workflow to automate your pre-release process.
+Creates a pre-release and posts a changelog preview comment. Use this workflow to automate the creation of pre-releases and changelog preview comments.
 
 **Usage**
 ```yml
@@ -239,7 +237,7 @@ uses: nullplatform/actions-nullplatform/.github/workflows/pre-release.yml@main
 ```
 
 ### release
-Creates a new release and updates README versions. Use this workflow to automate your release process.
+Creates a new release and updates README versions. Use this workflow to automate the creation of releases and update README versions.
 
 **Inputs**
 
@@ -255,8 +253,8 @@ with:
 ```
 
 ## 📚 Documentation
-### readme-ai-generator-v2
-Generates README files using AI. Use this workflow to automate your README generation process.
+### readme-ai-v2
+Generates README files using AI. Use this workflow to automate the generation of README files.
 
 **Inputs**
 
@@ -265,26 +263,26 @@ Generates README files using AI. Use this workflow to automate your README gener
 | base_dir | Base directory to search for projects | false | `.` |
 | generator_type | Force generator type | false |  |
 | generate_all | Generate README for all projects | false | `false` |
-| file_patterns | File patterns to detect changes | false | `*.tf *.ts *.tsx *.js *.jsx *.py` |
+| file_patterns | File patterns to detect changes | false | `*.tf *.py` |
 | ai_provider | AI provider to use | false | `groq` |
 | ai_model | AI model to use | false |  |
 | run_post_generation | Commands to run after generation | false |  |
 
 **Usage**
 ```yml
-uses: nullplatform/actions-nullplatform/.github/workflows/readme-ai-generator-v2.yml@main
+uses: nullplatform/actions-nullplatform/.github/workflows/readme-ai-v2.yml@main
 with:
   base_dir: .
   generator_type: terraform
   generate_all: false
-  file_patterns: *.tf *.ts *.tsx *.js *.jsx *.py
+  file_patterns: *.tf *.py
   ai_provider: groq
   ai_model: 
   run_post_generation: 
 ```
 
 ### tf-docs
-Generates Terraform documentation. Use this workflow to automate your Terraform documentation process.
+Generates Terraform documentation. Use this workflow to automate the generation of Terraform documentation.
 
 **Usage**
 ```yml
@@ -292,21 +290,11 @@ uses: nullplatform/actions-nullplatform/.github/workflows/tf-docs.yml@main
 ```
 
 ### update-readme-actions
-Updates the README with available actions. Use this workflow to automate your README update process.
-
-**Inputs**
-
-| Name | Description | Required | Default |
-| --- | --- | --- | --- |
-| ai_provider | AI provider to use | false | `groq` |
-| ai_model | AI model to use | false |  |
+Updates the README with available actions. Use this workflow to automate the update of the README with available actions.
 
 **Usage**
 ```yml
 uses: nullplatform/actions-nullplatform/.github/workflows/update-readme-actions.yml@main
-with:
-  ai_provider: groq
-  ai_model: 
 ```
 
 <!-- ACTIONS-END -->
