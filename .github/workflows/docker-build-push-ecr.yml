@@ -67,9 +67,9 @@ jobs:
           aws-region: ${{ inputs.aws_region }}
 
       - name: Login to Amazon ECR Public
-        run: |
-          aws ecr-public get-login-password --region us-east-1 | \
-            docker login --username AWS --password-stdin public.ecr.aws
+        uses: aws-actions/amazon-ecr-login@v2
+        with:
+          registry-type: public
 
       - name: Generate image tags
         id: tags
