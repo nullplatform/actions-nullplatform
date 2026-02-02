@@ -17,11 +17,6 @@ on:
         required: false
         type: string
         default: 'CRITICAL,HIGH'
-      aws_region:
-        description: 'AWS region for ECR'
-        required: false
-        type: string
-        default: 'us-east-1'
     secrets:
       aws_role_arn:
         description: 'AWS IAM Role ARN for OIDC authentication'
@@ -44,12 +39,12 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.aws_role_arn }}
-          aws-region: ${{ inputs.aws_region }}
+          aws-region: us-east-1
 
       - name: Login to Amazon ECR Public
-        run: |
-          aws ecr-public get-login-password --region us-east-1 | \
-            docker login --username AWS --password-stdin public.ecr.aws
+        uses: aws-actions/amazon-ecr-login@v2
+        with:
+          registry-type: public
 
       - name: Install Trivy
         run: |
