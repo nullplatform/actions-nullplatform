@@ -26,15 +26,9 @@ on:
         required: false
         type: number
         default: 1
-      upload_sarif:
-        description: 'Upload SARIF results to GitHub Security tab'
-        required: false
-        type: boolean
-        default: true
 
 permissions:
   contents: read
-  security-events: write
 
 jobs:
   scan:
@@ -64,16 +58,7 @@ jobs:
         uses: aquasecurity/trivy-action@0.33.1
         with:
           image-ref: '${{ inputs.image_name }}:scan'
-          format: 'sarif'
-          output: 'trivy-results.sarif'
+          format: 'table'
           exit-code: '${{ inputs.exit_code }}'
           severity: '${{ inputs.severity }}'
           ignore-unfixed: true
-
-      - name: Upload SARIF to GitHub Security
-        if: inputs.upload_sarif && always()
-        uses: github/codeql-action/upload-sarif@v3
-        continue-on-error: true
-        with:
-          sarif_file: 'trivy-results.sarif'
-          category: '${{ inputs.image_name }}'
