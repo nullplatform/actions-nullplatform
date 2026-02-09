@@ -26,57 +26,65 @@ Reusable GitHub Actions workflows that support OpenTofu/Terraform module automat
 | Workflow | Category | Description |
 | --- | --- | --- |
 | [branch-validation](#branch-validation) | 🔍 CI & Validation | Validates branch names against a regex pattern |
-| [changelog-release](#changelog-and-release) | 📦 Release & Changelog | Generates changelog and creates release |
+| [changelog-release](#changelog-and-release) | 📦 Release & Changelog | Generates changelog and creates a GitHub Release |
 | [conventional-commit](#conventional-commit) | 🔍 CI & Validation | Validates commits against conventional commit rules |
-| [docker-build-push-ecr](#docker-build-and-push-to-ecr) | 🚀 Build & Deploy | Builds and pushes Docker image to ECR |
-| [docker-security-scan](#docker-security-scan) | 🔒 Security | Scans Docker image for security vulnerabilities |
-| [ecr-security-scan](#ecr-security-scan) | 🔒 Security | Scans ECR images for security vulnerabilities |
-| [pre-release](#tofu-pre-release) | 📦 Release & Changelog | Posts changelog preview comment |
-| [readme-ai-v2](#readme-ai-generator-v2) | 📚 Documentation | Generates README files with AI |
-| [release](#tofu-release) | 📦 Release & Changelog | Creates release and updates README versions |
+| [docker-build-push-ecr](#docker-build-and-push-to-ecr) | 🚀 Build & Deploy | Builds and pushes a Docker image to ECR |
+| [docker-security-scan](#docker-security-scan) | 🔒 Security | Scans a Docker image for vulnerabilities |
+| [ecr-security-scan](#ecr-security-scan) | 🔒 Security | Scans ECR images for vulnerabilities |
+| [pre-release](#tofu-pre-release) | 📦 Release & Changelog | Creates a pre-release |
+| [readme-ai-generator-v2](#readme-ai-generator-v2) | 📚 Documentation | Generates README files using AI |
+| [release](#tofu-release) | 📦 Release & Changelog | Creates a release |
 | [tf-docs](#tofu-docs) | 📚 Documentation | Generates Terraform documentation |
-| [tfsec](#tfsec-security-scan) | 🔒 Security | Scans Terraform files for security vulnerabilities |
-| [tofu-lint](#tofu-lint) | 🔍 CI & Validation | Lints Tofu configuration |
+| [tfsec](#tfsec-security-scan) | 🔒 Security | Scans Terraform files for security issues |
+| [tofu-lint](#tofu-lint) | 🔍 CI & Validation | Lints Tofu files |
 | [tofu-test](#tofu-test) | 🔍 CI & Validation | Tests Tofu modules |
-| [update-readme-actions](#update-readme-actions) | 📚 Documentation | Updates README with available actions |
+| [update-readme-actions](#update-readme-actions) | 📚 Documentation | Updates the README with available actions |
 
 ## 🔍 CI & Validation
 ### branch-validation
-Validates branch names against a regex pattern. Use this workflow to enforce consistent branch naming conventions.
+Validates branch names against a regex pattern. Use this workflow to enforce a consistent naming convention for your branches.
 
-* **Inputs**:
-	+ `pattern`: Regex pattern for branch name validation (default: `^(feat|feature|fix|docs|style|refactor|perf|test|build|ci|chore|revert)/.+$`)
-* **Usage**:
-```yaml
+**Inputs**
+
+| Name | Description | Required | Default |
+| --- | --- | --- | --- |
+| pattern | Regex pattern for branch name validation | false | `^(feat|feature|fix|docs|style|refactor|perf|test|build|ci|chore|revert)/.+$` |
+
+**Usage**
+```yml
 uses: nullplatform/actions-nullplatform/.github/workflows/branch-validation.yml@main
 with:
   pattern: '^(feat|feature|fix|docs|style|refactor|perf|test|build|ci|chore|revert)/.+$'
 ```
 
 ### conventional-commit
-Validates commits against conventional commit rules. Use this workflow to enforce consistent commit messages.
+Validates commits against conventional commit rules. Use this workflow to enforce a consistent commit message format.
 
-* **Usage**:
-```yaml
+**Usage**
+```yml
 uses: nullplatform/actions-nullplatform/.github/workflows/conventional-commit.yml@main
 ```
 
 ### tofu-lint
-Lints Tofu configuration. Use this workflow to ensure Tofu configuration is valid and consistent.
+Lints Tofu files. Use this workflow to ensure your Tofu files are formatted correctly.
 
-* **Usage**:
-```yaml
+**Usage**
+```yml
 uses: nullplatform/actions-nullplatform/.github/workflows/tofu-lint.yml@main
 ```
 
 ### tofu-test
-Tests Tofu modules. Use this workflow to ensure Tofu modules are working as expected.
+Tests Tofu modules. Use this workflow to ensure your Tofu modules are working as expected.
 
-* **Inputs**:
-	+ `modules`: JSON array of module paths to test (required)
-	+ `tofu_version`: OpenTofu version to use (default: `1.10.6`)
-* **Usage**:
-```yaml
+**Inputs**
+
+| Name | Description | Required | Default |
+| --- | --- | --- | --- |
+| modules | JSON array of module paths to test | true |  |
+| tofu_version | OpenTofu version to use | false | `1.10.6` |
+
+**Usage**
+```yml
 uses: nullplatform/actions-nullplatform/.github/workflows/tofu-test.yml@main
 with:
   modules: '["module/a", "module/b"]'
@@ -85,17 +93,21 @@ with:
 
 ## 🔒 Security
 ### docker-security-scan
-Scans Docker image for security vulnerabilities. Use this workflow to ensure Docker images are secure.
+Scans a Docker image for vulnerabilities. Use this workflow to ensure your Docker images are secure.
 
-* **Inputs**:
-	+ `context`: Build context directory (required)
-	+ `dockerfile`: Path to Dockerfile relative to context (default: `Dockerfile`)
-	+ `image_name`: Name for the scanned image (required)
-	+ `severity`: Minimum severity to report (default: `CRITICAL,HIGH`)
-	+ `exit_code`: Exit code when vulnerabilities are found (default: `1`)
-	+ `upload_sarif`: Upload SARIF results to GitHub Security tab (default: `true`)
-* **Usage**:
-```yaml
+**Inputs**
+
+| Name | Description | Required | Default |
+| --- | --- | --- | --- |
+| context | Build context directory | true |  |
+| dockerfile | Path to Dockerfile relative to context | false | `Dockerfile` |
+| image_name | Name for the scanned image | true |  |
+| severity | Minimum severity to report | false | `CRITICAL,HIGH` |
+| exit_code | Exit code when vulnerabilities are found | false | `1` |
+| upload_sarif | Upload SARIF results to GitHub Security tab | false | `true` |
+
+**Usage**
+```yml
 uses: nullplatform/actions-nullplatform/.github/workflows/docker-security-scan.yml@main
 with:
   context: .
@@ -107,20 +119,26 @@ with:
 ```
 
 ### ecr-security-scan
-Scans ECR images for security vulnerabilities. Use this workflow to ensure ECR images are secure.
+Scans ECR images for vulnerabilities. Use this workflow to ensure your ECR images are secure.
 
-* **Inputs**:
-	+ `image_names`: JSON array of image names to scan (required)
-	+ `ecr_registry`: ECR registry URL (default: `public.ecr.aws/nullplatform`)
-	+ `severity`: Minimum severity to report (default: `CRITICAL,HIGH`)
-* **Secrets required**:
-	+ `aws_role_arn`: AWS IAM Role ARN for OIDC authentication
-	+ `slack_webhook_url`: Slack webhook URL for vulnerability alerts
-* **Usage**:
-```yaml
+**Inputs**
+
+| Name | Description | Required | Default |
+| --- | --- | --- | --- |
+| image_names | JSON array of image names to scan | true |  |
+| ecr_registry | ECR registry URL | false | `public.ecr.aws/nullplatform` |
+| severity | Minimum severity to report | false | `CRITICAL,HIGH` |
+
+**Secrets required**
+
+* `aws_role_arn`
+* `slack_webhook_url`
+
+**Usage**
+```yml
 uses: nullplatform/actions-nullplatform/.github/workflows/ecr-security-scan.yml@main
 with:
-  image_names: '["image/a", "image/b"]'
+  image_names: '["image1", "image2"]'
   ecr_registry: public.ecr.aws/nullplatform
   severity: CRITICAL,HIGH
 secrets:
@@ -129,14 +147,18 @@ secrets:
 ```
 
 ### tfsec
-Scans Terraform files for security vulnerabilities. Use this workflow to ensure Terraform configuration is secure.
+Scans Terraform files for security issues. Use this workflow to ensure your Terraform files are secure.
 
-* **Inputs**:
-	+ `minimum_severity`: Minimum severity level to report (default: `HIGH`)
-	+ `upload_sarif`: Upload SARIF results to GitHub Security tab (default: `true`)
-	+ `post_comment`: Post comment on PR if scan fails (default: `true`)
-* **Usage**:
-```yaml
+**Inputs**
+
+| Name | Description | Required | Default |
+| --- | --- | --- | --- |
+| minimum_severity | Minimum severity level to report | false | `HIGH` |
+| upload_sarif | Upload SARIF results to GitHub Security tab | false | `true` |
+| post_comment | Post comment on PR if scan fails | false | `true` |
+
+**Usage**
+```yml
 uses: nullplatform/actions-nullplatform/.github/workflows/tfsec.yml@main
 with:
   minimum_severity: HIGH
@@ -146,20 +168,26 @@ with:
 
 ## 🚀 Build & Deploy
 ### docker-build-push-ecr
-Builds and pushes Docker image to ECR. Use this workflow to build and deploy Docker images.
+Builds and pushes a Docker image to ECR. Use this workflow to build and deploy your Docker images.
 
-* **Inputs**:
-	+ `image_name`: Name of the Docker image (required)
-	+ `context`: Build context directory (required)
-	+ `dockerfile`: Path to Dockerfile relative to context (default: `Dockerfile`)
-	+ `platforms`: Target platforms for multi-arch build (default: `linux/amd64,linux/arm64`)
-	+ `ecr_registry`: ECR registry URL (default: `public.ecr.aws/nullplatform`)
-	+ `tag`: Additional tag for the image (default: ``)
-	+ `aws_region`: AWS region for ECR (default: `us-east-1`)
-* **Secrets required**:
-	+ `aws_role_arn`: AWS IAM Role ARN for OIDC authentication
-* **Usage**:
-```yaml
+**Inputs**
+
+| Name | Description | Required | Default |
+| --- | --- | --- | --- |
+| image_name | Name of the Docker image | true |  |
+| context | Build context directory | true |  |
+| dockerfile | Path to Dockerfile relative to context | false | `Dockerfile` |
+| platforms | Target platforms for multi-arch build | false | `linux/amd64,linux/arm64` |
+| ecr_registry | ECR registry URL | false | `public.ecr.aws/nullplatform` |
+| tag | Additional tag for the image | false |  |
+| aws_region | AWS region for ECR | false | `us-east-1` |
+
+**Secrets required**
+
+* `aws_role_arn`
+
+**Usage**
+```yml
 uses: nullplatform/actions-nullplatform/.github/workflows/docker-build-push-ecr.yml@main
 with:
   image_name: my-image
@@ -175,17 +203,21 @@ secrets:
 
 ## 📦 Release & Changelog
 ### changelog-release
-Generates changelog and creates release. Use this workflow to automate changelog generation and release creation.
+Generates changelog and creates a GitHub Release. Use this workflow to manage your releases and changelogs.
 
-* **Inputs**:
-	+ `project-type`: Type of project (default: `generic`)
-	+ `source-dir`: Directory containing packages/charts (default: `.`)
-	+ `version-file`: Version file name (default: ``)
-	+ `tag-prefix`: Prefix for git tags (default: ``)
-	+ `create-github-release`: Create a GitHub Release (default: `true`)
-	+ `commit-message`: Commit message for version bump (default: `chore(release): bump version and update changelog [skip ci]`)
-* **Usage**:
-```yaml
+**Inputs**
+
+| Name | Description | Required | Default |
+| --- | --- | --- | --- |
+| project-type | Type of project | false | `generic` |
+| source-dir | Directory containing packages/charts | false | `.` |
+| version-file | Version file name | false |  |
+| tag-prefix | Prefix for git tags | false |  |
+| create-github-release | Create a GitHub Release | false | `true` |
+| commit-message | Commit message for version bump | false | `chore(release): bump version and update changelog [skip ci]` |
+
+**Usage**
+```yml
 uses: nullplatform/actions-nullplatform/.github/workflows/changelog-release.yml@main
 with:
   project-type: generic
@@ -197,40 +229,48 @@ with:
 ```
 
 ### pre-release
-Posts changelog preview comment. Use this workflow to post a changelog preview comment before release.
+Creates a pre-release. Use this workflow to manage your pre-releases.
 
-* **Usage**:
-```yaml
+**Usage**
+```yml
 uses: nullplatform/actions-nullplatform/.github/workflows/pre-release.yml@main
 ```
 
 ### release
-Creates release and updates README versions. Use this workflow to automate release creation and README updates.
+Creates a release. Use this workflow to manage your releases.
 
-* **Inputs**:
-	+ `update_readme_versions`: Update version references in README files after release (default: `true`)
-* **Usage**:
-```yaml
+**Inputs**
+
+| Name | Description | Required | Default |
+| --- | --- | --- | --- |
+| update_readme_versions | Update version references in README files | false | `true` |
+
+**Usage**
+```yml
 uses: nullplatform/actions-nullplatform/.github/workflows/release.yml@main
 with:
   update_readme_versions: true
 ```
 
 ## 📚 Documentation
-### readme-ai-v2
-Generates README files with AI. Use this workflow to automate README generation.
+### readme-ai-generator-v2
+Generates README files using AI. Use this workflow to generate high-quality README files.
 
-* **Inputs**:
-	+ `base_dir`: Base directory to search for projects (default: `.`)
-	+ `generator_type`: Force generator type (default: ``)
-	+ `generate_all`: Generate README for all projects (default: `false`)
-	+ `file_patterns`: File patterns to detect changes (default: `*.tf *.ts *.tsx *.js *.jsx *.py`)
-	+ `ai_provider`: AI provider (default: `groq`)
-	+ `ai_model`: AI model to use (default: ``)
-	+ `run_post_generation`: Commands to run after generation (default: ``)
-* **Usage**:
-```yaml
-uses: nullplatform/actions-nullplatform/.github/workflows/readme-ai-v2.yml@main
+**Inputs**
+
+| Name | Description | Required | Default |
+| --- | --- | --- | --- |
+| base_dir | Base directory to search for projects | false | `.` |
+| generator_type | Force generator type | false |  |
+| generate_all | Generate README for all projects | false | `false` |
+| file_patterns | File patterns to detect changes | false | `*.tf *.ts *.tsx *.js *.jsx *.py` |
+| ai_provider | AI provider to use | false | `groq` |
+| ai_model | AI model to use | false |  |
+| run_post_generation | Commands to run after generation | false |  |
+
+**Usage**
+```yml
+uses: nullplatform/actions-nullplatform/.github/workflows/readme-ai-generator-v2.yml@main
 with:
   base_dir: .
   generator_type: terraform
@@ -242,25 +282,19 @@ with:
 ```
 
 ### tf-docs
-Generates Terraform documentation. Use this workflow to automate Terraform documentation generation.
+Generates Terraform documentation. Use this workflow to generate high-quality Terraform documentation.
 
-* **Usage**:
-```yaml
+**Usage**
+```yml
 uses: nullplatform/actions-nullplatform/.github/workflows/tf-docs.yml@main
 ```
 
 ### update-readme-actions
-Updates README with available actions. Use this workflow to automate README updates with available actions.
+Updates the README with available actions. Use this workflow to keep your README up-to-date with the latest available actions.
 
-* **Inputs**:
-	+ `ai_provider`: AI provider to use (default: `groq`)
-	+ `ai_model`: AI model to use (default: ``)
-* **Usage**:
-```yaml
+**Usage**
+```yml
 uses: nullplatform/actions-nullplatform/.github/workflows/update-readme-actions.yml@main
-with:
-  ai_provider: groq
-  ai_model: 
 ```
 
 <!-- ACTIONS-END -->
