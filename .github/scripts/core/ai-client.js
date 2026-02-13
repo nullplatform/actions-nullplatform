@@ -33,7 +33,7 @@ const PROVIDERS = {
   anthropic: {
     name: 'Anthropic Claude',
     endpoint: 'https://api.anthropic.com/v1/messages',
-    defaultModel: 'claude-sonnet-4-20250514',
+    defaultModel: 'claude-sonnet-4-5-20250929',
     apiKeyEnv: 'ANTHROPIC_API_KEY',
     format: 'anthropic',
   },
