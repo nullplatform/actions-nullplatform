@@ -69,7 +69,7 @@ jobs:
               --repository-name "${IMAGE_NAME}" \
               --region us-east-1 \
               --query 'imageTagDetails[?imageTag!=`null`].imageTag' \
-              --output text 2>/dev/null | tr '\t' '\n' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+              --output text 2>/dev/null | tr '\t' '\n' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
 
             if [ -z "${LATEST_TAG}" ]; then
               echo "  No semver tags found for ${IMAGE_NAME}, skipping..."
