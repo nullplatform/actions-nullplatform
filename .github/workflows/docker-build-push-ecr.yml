@@ -36,6 +36,11 @@ on:
         required: false
         type: string
         default: 'us-east-1'
+      build_args:
+        description: 'Docker build arguments (newline-separated, e.g. "ARG1=val1\nARG2=val2")'
+        required: false
+        type: string
+        default: ''
     secrets:
       aws_role_arn:
         description: 'AWS IAM Role ARN for OIDC authentication'
@@ -98,5 +103,6 @@ jobs:
           platforms: ${{ inputs.platforms }}
           push: true
           tags: ${{ steps.tags.outputs.tags }}
+          build-args: ${{ inputs.build_args }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
