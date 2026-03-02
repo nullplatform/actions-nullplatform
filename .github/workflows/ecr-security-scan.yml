@@ -48,8 +48,8 @@ jobs:
 
       - name: Install Trivy
         run: |
-          wget -q https://github.com/aquasecurity/trivy/releases/download/v0.65.0/trivy_0.65.0_Linux-64bit.deb
-          sudo dpkg -i trivy_0.65.0_Linux-64bit.deb
+          wget -q https://github.com/aquasecurity/trivy/releases/download/v0.69.2/trivy_0.69.2_Linux-64bit.deb
+          sudo dpkg -i trivy_0.69.2_Linux-64bit.deb
 
       - name: Get latest tags and scan images
         id: scan
