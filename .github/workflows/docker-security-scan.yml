@@ -21,6 +21,11 @@ on:
         required: false
         type: string
         default: 'CRITICAL,HIGH'
+      build_args:
+        description: 'Docker build arguments (multiline, one per line: KEY=VALUE)'
+        required: false
+        type: string
+        default: ''
       exit_code:
         description: 'Exit code when vulnerabilities are found (0 to not fail)'
         required: false
@@ -51,6 +56,7 @@ jobs:
           push: false
           load: true
           tags: ${{ inputs.image_name }}:scan
+          build-args: ${{ inputs.build_args }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
