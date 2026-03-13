@@ -2,6 +2,17 @@ name: PR Checks - Go
 
 on:
   workflow_call:
+    inputs:
+      working-directory:
+        description: 'Working directory for go commands'
+        required: false
+        type: string
+        default: '.'
+      go-version:
+        description: 'Go version (overrides go.mod if set)'
+        required: false
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -13,13 +24,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Go
+      - name: Set up Go (with version file)
+        if: inputs.go-version == ''
         uses: actions/setup-go@v4
         with:
           go-version-file: 'go.mod'
 
+      - name: Set up Go (with explicit version)
+        if: inputs.go-version != ''
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ inputs.go-version }}
+
       - name: Lint
+        working-directory: ${{ inputs.working-directory }}
         run: go vet ./...
 
       - name: Run tests
+        working-directory: ${{ inputs.working-directory }}
         run: go test ./...
