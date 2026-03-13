@@ -24,35 +24,35 @@ Reusable GitHub Actions workflows that support OpenTofu/Terraform module automat
 
 # GitHub Actions Reusable Workflows
 
-This repository contains reusable workflows for CI/CD, security scanning, documentation generation, and release automation.
-
 ## Summary
 
 | Workflow | Category | Description |
 |----------|----------|-------------|
-| [branch-validation](#branch-validation) | 🔍 CI & Validation | Enforces conventional branch naming patterns for pull requests |
-| [conventional-commit](#conventional-commit) | 🔍 CI & Validation | Validates commit messages follow conventional commit format |
-| [tfsec-security-scan](#tfsec-security-scan) | 🔒 Security | Scans Terraform/OpenTofu code for security vulnerabilities and misconfigurations |
-| [docker-security-scan](#docker-security-scan) | 🔒 Security | Scans Docker images for vulnerabilities using Trivy before pushing to registry |
-| [ecr-security-scan](#ecr-security-scan) | 🔒 Security | Continuously scans latest ECR images and sends Slack alerts for critical vulnerabilities |
-| [docker-build-push-ecr](#docker-build-push-ecr) | 🚀 Build & Deploy | Builds multi-arch Docker images and pushes to Amazon ECR Public registry |
-| [tofu-lint](#tofu-lint) | 🔍 CI & Validation | Validates and formats OpenTofu/Terraform code for consistency |
-| [tofu-test](#tofu-test) | 🔍 CI & Validation | Runs OpenTofu tests across multiple modules in parallel |
-| [pr-checks-docker](#pr-checks-docker) | 🔍 CI & Validation | Validates Docker builds in pull requests before merge |
-| [pr-checks-go](#pr-checks-go) | 🔍 CI & Validation | Runs Go linting and tests for pull request validation |
-| [pr-checks-node-npm](#pr-checks-node-npm) | 🔍 CI & Validation | Validates Node.js projects using npm package manager |
-| [pr-checks-node-pnpm](#pr-checks-node-pnpm) | 🔍 CI & Validation | Validates Node.js projects using pnpm package manager |
-| [Changelog and Release](#changelog-and-release) | 📦 Release & Changelog | Generates changelogs, bumps versions, creates tags and GitHub releases automatically |
-| [tofu-release](#tofu-release) | 📦 Release & Changelog | Automates Terraform module releases with version bumping and README updates |
-| [tofu-pre-release](#tofu-pre-release) | 📦 Release & Changelog | Previews changelog in pull requests before merging |
-| [tofu-docs](#tofu-docs) | 📚 Documentation | Auto-generates Terraform documentation and injects into README files |
-| [readme-ai-generator-v2](#readme-ai-generator-v2) | 📚 Documentation | Generates comprehensive README documentation using AI for Terraform, TypeScript, Python projects |
+| [branch-validation](#branch-validation) | 🔍 CI & Validation | Enforces conventional commit-style branch naming patterns for PRs |
+| [Changelog and Release](#changelog-and-release) | 📦 Release & Changelog | Generates changelogs and creates releases with automated version bumping |
+| [conventional-commit](#conventional-commit) | 🔍 CI & Validation | Validates commit messages against Conventional Commits specification |
+| [Docker Build and Push to ECR](#docker-build-and-push-to-ecr) | 🚀 Build & Deploy | Builds multi-arch Docker images and publishes them to Amazon ECR Public |
+| [Docker Security Scan](#docker-security-scan) | 🔒 Security | Scans Docker images for vulnerabilities using Trivy before deployment |
+| [ECR Security Scan](#ecr-security-scan) | 🔒 Security | Scans deployed ECR images for vulnerabilities and sends Slack alerts |
+| [PR Checks - Docker Build](#pr-checks-docker-build) | 🔍 CI & Validation | Validates Docker builds in pull requests |
+| [PR Checks - Go](#pr-checks-go) | 🔍 CI & Validation | Runs Go linting and tests for pull requests |
+| [PR Checks - Node (npm)](#pr-checks-node-npm) | 🔍 CI & Validation | Runs npm-based linting and tests for Node.js projects |
+| [PR Checks - Node (pnpm)](#pr-checks-node-pnpm) | 🔍 CI & Validation | Runs pnpm-based linting and tests for Node.js projects |
+| [tofu-pre-release](#tofu-pre-release) | 📦 Release & Changelog | Posts changelog preview comments on PRs using semantic-release |
+| [readme-ai-generator-v2](#readme-ai-generator-v2) | 📚 Documentation | AI-powered README generation for Terraform, TypeScript, Python, and other projects |
+| [tofu-release](#tofu-release) | 📦 Release & Changelog | Automated releases for Terraform modules using Release Please |
+| [tofu-docs](#tofu-docs) | 📚 Documentation | Generates and updates Terraform documentation using terraform-docs |
+| [tfsec-security-scan](#tfsec-security-scan) | 🔒 Security | Scans Terraform code for security issues and misconfigurations |
+| [tofu-lint](#tofu-lint) | 🔍 CI & Validation | Validates and formats OpenTofu/Terraform code |
+| [tofu-test](#tofu-test) | 🔍 CI & Validation | Runs OpenTofu native tests across multiple modules in parallel |
+
+---
 
 ## 🔍 CI & Validation
 
 ### branch-validation
 
-Validates branch names against conventional naming patterns to ensure consistent Git workflow practices. Enforces format like `feat/description`, `fix/bug-123`, preventing merges of incorrectly named branches.
+Validates branch names in pull requests against a configurable regex pattern, enforcing conventional commit-style prefixes (feat/, fix/, docs/, etc.). Use this to maintain consistent branch naming conventions across your team.
 
 **Inputs**
 
@@ -60,17 +60,28 @@ Validates branch names against conventional naming patterns to ensure consistent
 |------|-------------|----------|---------|
 | pattern | Regex pattern for branch name validation | No | `^(feat\|feature\|fix\|docs\|style\|refactor\|perf\|test\|build\|ci\|chore\|revert)/.+$` |
 
+**Secrets required**
+- None
+
 **Usage**
 
 ```yaml
 uses: nullplatform/actions-nullplatform/.github/workflows/branch-validation.yml@main
 with:
-  pattern: '^(feat|fix|docs)/.+$'
+  pattern: '^(feat|fix|docs|chore)/.+$'
 ```
+
+---
 
 ### conventional-commit
 
-Validates all commit messages in pull requests follow the conventional commits specification, ensuring consistent commit history and enabling automated changelog generation.
+Validates all commits in a pull request against the Conventional Commits specification using commitlint. Ensures commit messages follow the format `type(scope): description` with allowed types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert.
+
+**Inputs**
+- None
+
+**Secrets required**
+- None
 
 **Usage**
 
@@ -78,39 +89,11 @@ Validates all commit messages in pull requests follow the conventional commits s
 uses: nullplatform/actions-nullplatform/.github/workflows/conventional-commit.yml@main
 ```
 
-### tofu-lint
+---
 
-Validates OpenTofu/Terraform code formatting and syntax, ensuring infrastructure code meets quality standards before deployment.
+### PR Checks - Docker Build
 
-**Usage**
-
-```yaml
-uses: nullplatform/actions-nullplatform/.github/workflows/tofu-lint.yml@main
-```
-
-### tofu-test
-
-Executes OpenTofu test suites across multiple modules in parallel, validating infrastructure code behavior and configurations.
-
-**Inputs**
-
-| Name | Description | Required | Default |
-|------|-------------|----------|---------|
-| modules | JSON array of module paths to test | Yes | - |
-| tofu_version | OpenTofu version to use | No | `1.10.6` |
-
-**Usage**
-
-```yaml
-uses: nullplatform/actions-nullplatform/.github/workflows/tofu-test.yml@main
-with:
-  modules: '["modules/vpc", "modules/ecs"]'
-  tofu_version: '1.10.6'
-```
-
-### pr-checks-docker
-
-Validates Docker builds succeed in pull requests, catching build failures before code reaches main branch.
+Validates that Docker images can be built successfully in pull requests. Useful for catching build errors before merge without pushing images to a registry.
 
 **Inputs**
 
@@ -120,7 +103,7 @@ Validates Docker builds succeed in pull requests, catching build failures before
 | dockerfile | Path to the Dockerfile | No | `Dockerfile` |
 
 **Secrets required**
-- `GITHUB_TOKEN` (automatically provided)
+- None (uses `GITHUB_TOKEN` automatically)
 
 **Usage**
 
@@ -131,9 +114,11 @@ with:
   dockerfile: Dockerfile.production
 ```
 
-### pr-checks-go
+---
 
-Runs Go linting and tests for pull requests, ensuring code quality and preventing broken builds.
+### PR Checks - Go
+
+Runs Go linting (go vet) and tests for pull requests. Automatically detects Go version from go.mod or allows explicit version specification.
 
 **Inputs**
 
@@ -142,18 +127,23 @@ Runs Go linting and tests for pull requests, ensuring code quality and preventin
 | working-directory | Working directory for go commands | No | `.` |
 | go-version | Go version (overrides go.mod if set) | No | `` |
 
+**Secrets required**
+- None
+
 **Usage**
 
 ```yaml
 uses: nullplatform/actions-nullplatform/.github/workflows/pr-checks-go.yml@main
 with:
-  working-directory: ./services/api
+  working-directory: ./cmd/myapp
   go-version: '1.21'
 ```
 
-### pr-checks-node-npm
+---
 
-Validates Node.js projects using npm, running linting and tests to ensure code quality in pull requests.
+### PR Checks - Node (npm)
+
+Runs linting and tests for Node.js projects using npm. Automatically detects Node version from .node-version file or allows explicit specification.
 
 **Inputs**
 
@@ -163,20 +153,22 @@ Validates Node.js projects using npm, running linting and tests to ensure code q
 | node-version | Node.js version (overrides .node-version file if set) | No | `` |
 
 **Secrets required**
-- `GITHUB_TOKEN` (automatically provided)
+- None (uses `GITHUB_TOKEN` for package registry access)
 
 **Usage**
 
 ```yaml
 uses: nullplatform/actions-nullplatform/.github/workflows/pr-checks-node-npm.yml@main
 with:
-  working-directory: ./frontend
+  working-directory: ./packages/frontend
   node-version: '20'
 ```
 
-### pr-checks-node-pnpm
+---
 
-Validates Node.js projects using pnpm package manager, optimized for monorepos and faster installations.
+### PR Checks - Node (pnpm)
+
+Runs linting and tests for Node.js projects using pnpm package manager. Supports the same features as npm workflow but optimized for pnpm workspaces.
 
 **Inputs**
 
@@ -186,44 +178,66 @@ Validates Node.js projects using pnpm package manager, optimized for monorepos a
 | node-version | Node.js version (overrides .node-version file if set) | No | `` |
 
 **Secrets required**
-- `GITHUB_TOKEN` (automatically provided)
+- None (uses `GITHUB_TOKEN` for package registry access)
 
 **Usage**
 
 ```yaml
 uses: nullplatform/actions-nullplatform/.github/workflows/pr-checks-node-pnpm.yml@main
 with:
-  working-directory: ./packages/core
-  node-version: '22'
+  working-directory: ./apps/web
 ```
 
-## 🔒 Security
+---
 
-### tfsec-security-scan
+### tofu-lint
 
-Scans Terraform/OpenTofu infrastructure code for security vulnerabilities, misconfigurations, and compliance violations. Uploads results to GitHub Security tab and posts comments on pull requests.
+Validates OpenTofu/Terraform code by running `tofu init`, `tofu fmt -check`, and `tofu validate`. Use this in pull requests to catch formatting and syntax errors before merge.
+
+**Inputs**
+- None
+
+**Secrets required**
+- None
+
+**Usage**
+
+```yaml
+uses: nullplatform/actions-nullplatform/.github/workflows/tofu-lint.yml@main
+```
+
+---
+
+### tofu-test
+
+Runs OpenTofu native tests across multiple modules in parallel with configurable concurrency. Accepts a JSON array of module paths and executes `tofu test` in each.
 
 **Inputs**
 
 | Name | Description | Required | Default |
 |------|-------------|----------|---------|
-| minimum_severity | Minimum severity level to report | No | `HIGH` |
-| upload_sarif | Upload SARIF results to GitHub Security tab | No | `true` |
-| post_comment | Post comment on PR if scan fails | No | `true` |
+| modules | JSON array of module paths to test (e.g. ["module/a", "module/b"]) | Yes | - |
+| tofu_version | OpenTofu version to use | No | `1.10.6` |
+
+**Secrets required**
+- None
 
 **Usage**
 
 ```yaml
-uses: nullplatform/actions-nullplatform/.github/workflows/tfsec.yml@main
+uses: nullplatform/actions-nullplatform/.github/workflows/tofu-test.yml@main
 with:
-  minimum_severity: CRITICAL
-  upload_sarif: true
-  post_comment: true
+  modules: '["modules/vpc", "modules/eks", "modules/rds"]'
+  tofu_version: '1.10.6'
 ```
 
-### docker-security-scan
+---
 
-Scans Docker images for known vulnerabilities using Trivy before pushing to registries, preventing vulnerable images from deployment.
+## 🔒 Security
+
+### Docker Security Scan
+
+Scans Docker images for vulnerabilities using Trivy before deployment. Builds the image locally and reports vulnerabilities at specified severity levels. Use this in pull requests to prevent vulnerable images from being deployed.
 
 **Inputs**
 
@@ -232,9 +246,12 @@ Scans Docker images for known vulnerabilities using Trivy before pushing to regi
 | context | Build context directory | Yes | - |
 | dockerfile | Path to Dockerfile relative to context | No | `Dockerfile` |
 | image_name | Name for the scanned image (used for reporting) | Yes | - |
-| severity | Minimum severity to report | No | `CRITICAL,HIGH` |
-| build_args | Docker build arguments (multiline) | No | `` |
-| exit_code | Exit code when vulnerabilities are found | No | `1` |
+| severity | Minimum severity to report (CRITICAL,HIGH,MEDIUM,LOW) | No | `CRITICAL,HIGH` |
+| build_args | Docker build arguments (multiline, one per line: KEY=VALUE) | No | `` |
+| exit_code | Exit code when vulnerabilities are found (0 to not fail) | No | `1` |
+
+**Secrets required**
+- None
 
 **Usage**
 
@@ -242,23 +259,26 @@ Scans Docker images for known vulnerabilities using Trivy before pushing to regi
 uses: nullplatform/actions-nullplatform/.github/workflows/docker-security-scan.yml@main
 with:
   context: ./services/api
-  dockerfile: Dockerfile
   image_name: my-api
-  severity: CRITICAL,HIGH
-  exit_code: 1
+  severity: 'CRITICAL,HIGH,MEDIUM'
+  build_args: |
+    NODE_ENV=production
+    API_VERSION=2.0.0
 ```
 
-### ecr-security-scan
+---
 
-Continuously monitors ECR images for security vulnerabilities, scanning latest versions and sending Slack alerts for critical findings.
+### ECR Security Scan
+
+Scans already-deployed images in Amazon ECR Public for vulnerabilities and sends Slack alerts when issues are found. Automatically detects the latest semver tag for each image and scans it with Trivy. Ideal for scheduled security audits.
 
 **Inputs**
 
 | Name | Description | Required | Default |
 |------|-------------|----------|---------|
-| image_names | JSON array of image names to scan | Yes | - |
+| image_names | JSON array of image names to scan (e.g., ["k8s-logs-controller", "k8s-traffic-manager"]) | Yes | - |
 | ecr_registry | ECR registry URL | No | `public.ecr.aws/nullplatform` |
-| severity | Minimum severity to report | No | `CRITICAL,HIGH` |
+| severity | Minimum severity to report (CRITICAL,HIGH,MEDIUM,LOW) | No | `CRITICAL,HIGH` |
 
 **Secrets required**
 - `aws_role_arn` - AWS IAM Role ARN for OIDC authentication
@@ -269,32 +289,61 @@ Continuously monitors ECR images for security vulnerabilities, scanning latest v
 ```yaml
 uses: nullplatform/actions-nullplatform/.github/workflows/ecr-security-scan.yml@main
 with:
-  image_names: '["api-service", "worker-service"]'
+  image_names: '["my-app", "my-worker", "my-api"]'
   ecr_registry: public.ecr.aws/myorg
-  severity: CRITICAL,HIGH
+  severity: 'CRITICAL,HIGH'
 secrets:
   aws_role_arn: ${{ secrets.AWS_ROLE_ARN }}
-  slack_webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+  slack_webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
 ```
 
-## 🚀 Build & Deploy
+---
 
-### docker-build-push-ecr
+### tfsec-security-scan
 
-Builds multi-architecture Docker images (amd64/arm64) and pushes to Amazon ECR Public registry with semantic versioning.
+Scans Terraform code for security issues and misconfigurations using tfsec. Generates SARIF reports for GitHub Security tab, posts PR comments on failures, and supports configurable severity levels.
 
 **Inputs**
 
 | Name | Description | Required | Default |
 |------|-------------|----------|---------|
-| image_name | Name of the Docker image | Yes | - |
+| minimum_severity | Minimum severity level to report (CRITICAL, HIGH, MEDIUM, LOW) | No | `HIGH` |
+| upload_sarif | Upload SARIF results to GitHub Security tab | No | `true` |
+| post_comment | Post comment on PR if scan fails | No | `true` |
+
+**Secrets required**
+- None (uses `GITHUB_TOKEN` automatically)
+
+**Usage**
+
+```yaml
+uses: nullplatform/actions-nullplatform/.github/workflows/tfsec.yml@main
+with:
+  minimum_severity: MEDIUM
+  upload_sarif: true
+  post_comment: true
+```
+
+---
+
+## 🚀 Build & Deploy
+
+### Docker Build and Push to ECR
+
+Builds multi-architecture Docker images (amd64/arm64) and pushes them to Amazon ECR Public. Uses AWS OIDC authentication, supports custom build arguments, and implements build caching with GitHub Actions cache.
+
+**Inputs**
+
+| Name | Description | Required | Default |
+|------|-------------|----------|---------|
+| image_name | Name of the Docker image (e.g., k8s-logs-controller) | Yes | - |
 | context | Build context directory | Yes | - |
 | dockerfile | Path to Dockerfile relative to context | No | `Dockerfile` |
 | platforms | Target platforms for multi-arch build | No | `linux/amd64,linux/arm64` |
 | ecr_registry | ECR registry URL | No | `public.ecr.aws/nullplatform` |
-| tag | Additional tag for the image | No | `` |
+| tag | Additional tag for the image (latest and sha are always added) | No | `` |
 | aws_region | AWS region for ECR | No | `us-east-1` |
-| build_args | Docker build arguments (newline-separated) | No | `` |
+| build_args | Docker build arguments (newline-separated, e.g. "ARG1=val1\nARG2=val2") | No | `` |
 
 **Secrets required**
 - `aws_role_arn` - AWS IAM Role ARN for OIDC authentication
@@ -307,121 +356,78 @@ with:
   image_name: my-app
   context: .
   dockerfile: Dockerfile
-  tag: v1.2.3
-  platforms: linux/amd64,linux/arm64
+  tag: my-app-v2.0.0
   build_args: |
     NODE_ENV=production
-    API_VERSION=v2
+    API_VERSION=2.0.0
 secrets:
   aws_role_arn: ${{ secrets.AWS_ROLE_ARN }}
 ```
+
+---
 
 ## 📦 Release & Changelog
 
 ### Changelog and Release
 
-Automatically generates changelogs from conventional commits, bumps semantic versions, updates version files, creates Git tags, and publishes GitHub releases. Supports Helm charts, npm packages, and generic projects.
+Generates conventional changelogs, bumps versions automatically based on commit types, and creates GitHub releases. Supports Helm charts, npm packages, and generic projects with customizable version files and tag prefixes.
 
 **Inputs**
 
 | Name | Description | Required | Default |
 |------|-------------|----------|---------|
 | project-type | Type of project: helm-charts, npm, generic | No | `generic` |
-| source-dir | Directory containing packages/charts | No | `.` |
-| version-file | Version file name (auto-detected if not specified) | No | `` |
-| tag-prefix | Prefix for git tags (e.g., "v" for v1.0.0) | No | `` |
+| source-dir | Directory containing packages/charts (use . for root) | No | `.` |
+| version-file | Version file name (Chart.yaml, package.json, VERSION). Auto-detected if not specified. | No | `` |
+| tag-prefix | Prefix for git tags (e.g., "v" for v1.0.0). Use empty for no prefix. | No | `` |
 | create-github-release | Create a GitHub Release | No | `true` |
 | commit-message | Commit message for version bump | No | `chore(release): bump version and update changelog [skip ci]` |
 
 **Outputs**
-- `has_changes` - Whether there were changes to release
-- `new_version` - The new version number
-- `changelog` - The generated changelog content
+
+| Name | Description |
+|------|-------------|
+| has_changes | Whether there were changes to release |
+| new_version | The new version number |
+| changelog | The generated changelog content |
 
 **Secrets required**
-- `GITHUB_TOKEN` (automatically provided)
+- None (uses `GITHUB_TOKEN` automatically)
 
 **Usage**
 
 ```yaml
 uses: nullplatform/actions-nullplatform/.github/workflows/changelog-release.yml@main
 with:
-  project-type: helm-charts
-  source-dir: charts
+  project-type: npm
+  source-dir: packages
   tag-prefix: v
   create-github-release: true
-secrets: inherit
 ```
 
-### tofu-release
-
-Automates Terraform module releases using Release Please, handling version bumping, changelog generation, and optionally updating version references across all README files.
-
-**Inputs**
-
-| Name | Description | Required | Default |
-|------|-------------|----------|---------|
-| update_readme_versions | Update version references in README files after release | No | `true` |
-
-**Secrets required**
-- `GITHUB_TOKEN` (automatically provided)
-
-**Usage**
-
-```yaml
-uses: nullplatform/actions-nullplatform/.github/workflows/release.yml@main
-with:
-  update_readme_versions: true
-secrets: inherit
-```
+---
 
 ### tofu-pre-release
 
-Generates changelog preview in pull request comments using semantic-release, helping reviewers understand the impact of changes before merge.
+Posts changelog preview comments on pull requests using semantic-release-github-pr. Shows what the release notes will look like before merging, helping reviewers understand the impact of changes.
+
+**Inputs**
+- None
 
 **Secrets required**
-- `GITHUB_TOKEN` (automatically provided)
+- None (uses `GITHUB_TOKEN` automatically)
 
 **Usage**
 
 ```yaml
 uses: nullplatform/actions-nullplatform/.github/workflows/pre-release.yml@main
-secrets: inherit
 ```
 
-## 📚 Documentation
+---
 
-### tofu-docs
+### tofu-release
 
-Automatically generates Terraform module documentation using terraform-docs and injects it into README files between markers. Runs on every push or can be triggered manually.
-
-**Usage**
-
-```yaml
-uses: nullplatform/actions-nullplatform/.github/workflows/tf-docs.yml@main
-```
-
-### readme-ai-generator-v2
-
-Generates comprehensive, context-aware README documentation using AI for Terraform modules, TypeScript/JavaScript projects, and Python packages. Detects changed files or regenerates all documentation with support for multiple AI providers.
-
-**Inputs**
-
-| Name | Description | Required | Default |
-|------|-------------|----------|---------|
-| base_dir | Base directory to search for projects | No | `.` |
-| generator_type | Force generator type or leave empty for auto-detect | No | `` |
-| generate_all | Generate README for all projects | No | `false` |
-| file_patterns | File patterns to detect changes | No | `*.tf *.ts *.tsx *.js *.jsx *.py` |
-| ai_provider | AI provider (groq, github, openai, anthropic) | No | `groq` |
-| ai_model | AI model to use for generation | No | `` |
-| run_post_generation | Commands to run after generation | No | `` |
-
-**Secrets required**
-- `GITHUB_TOKEN` (automatically provided)
-- `GROQ_API_KEY` (if using Groq provider)
-- `OPENAI_API_KEY` (if using OpenAI provider)
-- `ANTHROPIC_API_KEY` (if using Anthropic
+Automates releases for Terraform modules using Google's Release Please action. Creates release PRs with automated changelogs and optionally updates version references in all README files after release.
 
 <!-- ACTIONS-END -->
 
