@@ -33,6 +33,7 @@ jobs:
         with:
           node-version-file: '.node-version'
           cache: 'npm'
+          cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
 
       - name: Setup Node.js (with explicit version)
         if: inputs.node-version != ''
@@ -40,6 +41,7 @@ jobs:
         with:
           node-version: ${{ inputs.node-version }}
           cache: 'npm'
+          cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
 
       - name: Install dependencies
         working-directory: ${{ inputs.working-directory }}
