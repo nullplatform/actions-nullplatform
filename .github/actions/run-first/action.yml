@@ -1,0 +1,25 @@
+name: Run first available script
+inputs:
+  candidates:
+    required: true
+  package-manager:
+    required: false
+    default: 'npm'
+runs:
+  using: composite
+  steps:
+    - shell: sh
+      env:
+        CANDIDATES: ${{ inputs.candidates }}
+        PKG_MANAGER: ${{ inputs.package-manager }}
+      run: |
+        SCRIPTS=$(jq -r '.scripts | keys[]' package.json)
+        for script in $CANDIDATES; do
+          if echo "$SCRIPTS" | grep -qx "$script"; then
+            echo "▶ Running: $script"
+            $PKG_MANAGER run "$script"
+            exit $?
+          fi
+        done
+        echo "⚠ None of these scripts exist: $CANDIDATES"
+        exit 1
