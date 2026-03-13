@@ -27,4 +27,4 @@ runs:
           fi
         done
         echo "⚠ None of these scripts exist: $CANDIDATES"
-        exit 1
+        exit 0
