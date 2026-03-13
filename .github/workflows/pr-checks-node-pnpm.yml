@@ -2,6 +2,17 @@ name: PR Checks - Node (pnpm)
 
 on:
   workflow_call:
+    inputs:
+      working-directory:
+        description: 'Working directory for pnpm commands'
+        required: false
+        type: string
+        default: '.'
+      node-version:
+        description: 'Node.js version (overrides .node-version file if set)'
+        required: false
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -19,13 +30,22 @@ jobs:
       - name: Install pnpm
         uses: pnpm/action-setup@v4
 
-      - name: Setup Node.js
+      - name: Setup Node.js (with version file)
+        if: inputs.node-version == ''
         uses: actions/setup-node@v4
         with:
           node-version-file: '.node-version'
           cache: 'pnpm'
 
+      - name: Setup Node.js (with explicit version)
+        if: inputs.node-version != ''
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: 'pnpm'
+
       - name: Install dependencies
+        working-directory: ${{ inputs.working-directory }}
         run: pnpm install
 
       - name: Lint
@@ -35,4 +55,5 @@ jobs:
           package-manager: pnpm
 
       - name: Run tests
+        working-directory: ${{ inputs.working-directory }}
         run: pnpm test

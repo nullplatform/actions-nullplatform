@@ -2,6 +2,17 @@ name: PR Checks - Docker Build
 
 on:
   workflow_call:
+    inputs:
+      context:
+        description: 'Docker build context path'
+        required: false
+        type: string
+        default: '.'
+      dockerfile:
+        description: 'Path to the Dockerfile'
+        required: false
+        type: string
+        default: 'Dockerfile'
 
 permissions:
   contents: read
@@ -14,4 +25,4 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build image
-        run: docker build --build-arg GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN }} -t pr-check .
+        run: docker build --build-arg GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN }} -f ${{ inputs.dockerfile }} -t pr-check ${{ inputs.context }}
