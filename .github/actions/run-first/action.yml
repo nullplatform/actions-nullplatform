@@ -5,6 +5,9 @@ inputs:
   package-manager:
     required: false
     default: 'npm'
+  working-directory:
+    required: false
+    default: '.'
 runs:
   using: composite
   steps:
@@ -12,7 +15,9 @@ runs:
       env:
         CANDIDATES: ${{ inputs.candidates }}
         PKG_MANAGER: ${{ inputs.package-manager }}
+        WORKING_DIR: ${{ inputs.working-directory }}
       run: |
+        cd "$WORKING_DIR"
         SCRIPTS=$(jq -r '.scripts | keys[]' package.json)
         for script in $CANDIDATES; do
           if echo "$SCRIPTS" | grep -qx "$script"; then

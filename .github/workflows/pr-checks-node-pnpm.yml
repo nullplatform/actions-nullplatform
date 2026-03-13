@@ -55,6 +55,7 @@ jobs:
         with:
           candidates: 'test:static lint'
           package-manager: pnpm
+          working-directory: ${{ inputs.working-directory }}
 
       - name: Run tests
         working-directory: ${{ inputs.working-directory }}
