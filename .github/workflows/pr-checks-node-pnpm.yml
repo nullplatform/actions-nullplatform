@@ -36,6 +36,7 @@ jobs:
         with:
           node-version-file: '.node-version'
           cache: 'pnpm'
+          cache-dependency-path: ${{ inputs.working-directory }}/pnpm-lock.yaml
 
       - name: Setup Node.js (with explicit version)
         if: inputs.node-version != ''
@@ -43,6 +44,7 @@ jobs:
         with:
           node-version: ${{ inputs.node-version }}
           cache: 'pnpm'
+          cache-dependency-path: ${{ inputs.working-directory }}/pnpm-lock.yaml
 
       - name: Install dependencies
         working-directory: ${{ inputs.working-directory }}
