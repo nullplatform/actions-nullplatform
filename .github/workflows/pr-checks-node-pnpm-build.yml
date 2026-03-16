@@ -1,4 +1,4 @@
-name: PR Checks - Node (pnpm)
+name: PR Checks - Node Build (pnpm)
 
 on:
   workflow_call:
@@ -19,8 +19,8 @@ permissions:
   packages: read
 
 jobs:
-  testing:
-    name: Testing
+  build:
+    name: Build
     runs-on: ubuntu-24.04
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -50,13 +50,6 @@ jobs:
         working-directory: ${{ inputs.working-directory }}
         run: pnpm install
 
-      - name: Lint
-        uses: nullplatform/actions-nullplatform/.github/actions/run-first@main
-        with:
-          candidates: 'test:static lint'
-          package-manager: pnpm
-          working-directory: ${{ inputs.working-directory }}
-
-      - name: Run tests
+      - name: Build
         working-directory: ${{ inputs.working-directory }}
-        run: pnpm test
+        run: pnpm build
