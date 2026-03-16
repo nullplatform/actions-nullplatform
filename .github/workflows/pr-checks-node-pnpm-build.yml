@@ -1,0 +1,55 @@
+name: PR Checks - Node Build (pnpm)
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        description: 'Working directory for pnpm commands'
+        required: false
+        type: string
+        default: '.'
+      node-version:
+        description: 'Node.js version (overrides .node-version file if set)'
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js (with version file)
+        if: inputs.node-version == ''
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: '.node-version'
+          cache: 'pnpm'
+          cache-dependency-path: ${{ inputs.working-directory }}/pnpm-lock.yaml
+
+      - name: Setup Node.js (with explicit version)
+        if: inputs.node-version != ''
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: 'pnpm'
+          cache-dependency-path: ${{ inputs.working-directory }}/pnpm-lock.yaml
+
+      - name: Install dependencies
+        working-directory: ${{ inputs.working-directory }}
+        run: pnpm install
+
+      - name: Build
+        working-directory: ${{ inputs.working-directory }}
+        run: pnpm build
