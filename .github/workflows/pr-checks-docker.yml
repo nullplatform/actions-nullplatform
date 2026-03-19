@@ -13,6 +13,11 @@ on:
         required: false
         type: string
         default: 'Dockerfile'
+      use_buildkit_secret:
+        description: 'Use BuildKit --secret for GITHUB_TOKEN instead of --build-arg (requires updated Dockerfile)'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -25,5 +30,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build image
-        run: docker build --build-arg GITHUB_TOKEN=${{ secrets.CI_TOKEN || secrets.GITHUB_TOKEN }} -f ${{ inputs.dockerfile }} -t pr-check ${{ inputs.context }}
+      - name: Build image (legacy --build-arg)
+        if: ${{ !inputs.use_buildkit_secret }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.CI_TOKEN || secrets.GITHUB_TOKEN }}
+          DOCKERFILE: ${{ inputs.dockerfile }}
+          CONTEXT: ${{ inputs.context }}
+        run: docker build --build-arg GITHUB_TOKEN="$GITHUB_TOKEN" -f "$DOCKERFILE" -t pr-check "$CONTEXT"
+
+      - name: Build image (BuildKit secret)
+        if: ${{ inputs.use_buildkit_secret }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.CI_TOKEN || secrets.GITHUB_TOKEN }}
+          DOCKERFILE: ${{ inputs.dockerfile }}
+          CONTEXT: ${{ inputs.context }}
+        run: |
+          DOCKER_BUILDKIT=1 docker build \
+            --secret id=GITHUB_TOKEN,env=GITHUB_TOKEN \
+            -f "$DOCKERFILE" -t pr-check "$CONTEXT"
