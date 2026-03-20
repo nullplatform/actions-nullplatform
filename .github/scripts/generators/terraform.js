@@ -5,6 +5,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { readFilesByPattern, extractBetweenMarkers, getNameFromPath, getLatestTag, getRepository } = require('../core/file-utils');
 
 const config = {
@@ -126,10 +127,20 @@ function prepareContext(dir) {
   // Variables con default sin validation = opcionales simples
   const optionalVars = variables.filter(v => v.hasDefault && !v.validation);
 
-  // Format files for prompt
+  // Format files for prompt — all relevant files included
+  const PROMPT_FILES = ['variables.tf', 'outputs.tf', 'output.tf', 'main.tf', 'data.tf', 'locals.tf'];
+
   const filesContext = Object.entries(tfFiles)
+    .filter(([filename]) => PROMPT_FILES.some(f => filename.endsWith(f)))
     .map(([filename, content]) => `### ${filename}\n\`\`\`hcl\n${content}\n\`\`\``)
     .join('\n\n');
+
+  // Hash covers all prompt files — detects changes in any relevant content
+  const hashContent = Object.entries(tfFiles)
+    .filter(([filename]) => PROMPT_FILES.some(f => filename.endsWith(f)))
+    .map(([, content]) => content)
+    .join('\n');
+  const contentHash = crypto.createHash('md5').update(hashContent).digest('hex');
 
   return {
     files: tfFiles,
@@ -143,6 +154,7 @@ function prepareContext(dir) {
     moduleName: getNameFromPath(dir),
     tag: getLatestTag(),
     repository: getRepository(),
+    contentHash,
   };
 }
 
@@ -186,7 +198,7 @@ UNDERSTANDING TRIGGERS AND CONDITIONAL VARIABLES:
 - This means: when trigger_name = "value1", the conditional_var becomes required
 
 TASK:
-1. Analyze the module to generate description and features
+1. Analyze the module to generate description, architecture, and features
 2. For EACH trigger variable, extract ALL possible values from its contains() validation
 3. For EACH possible value, identify which conditional variables become required
 4. Generate a usage section for EVERY possible value (even if no conditional variables apply)
@@ -194,6 +206,7 @@ TASK:
 Return this exact JSON structure:
 {
   "description": "One sentence describing what this module does",
+  "architecture": "2-4 sentences describing internal data flow: what Terraform resource types are created (e.g. aws_iam_role, helm_release), how they connect internally, and how inputs flow into resources and outputs",
   "features": ["feature 1", "feature 2", "feature 3"],
   "conditionalUsage": [
     {
@@ -213,12 +226,12 @@ Return this exact JSON structure:
 
 Rules:
 - description: One clear sentence, no period at the end
-- features: Array of 3-7 strings, each starting with a verb (Creates, Configures, Supports, etc.)
-- conditionalUsage: Array of usage groups for EVERY trigger value. Each group has:
-  - name: Human-readable name for this configuration (e.g., "S3 Backup", "Native Backup")
-  - triggerVar: The name of the trigger variable
-  - triggerValue: The specific value for this section (e.g., "s3", "native", "glacier")
-  - variables: Array of conditional variables required for this trigger value (can be empty [])
+- architecture: 2-4 sentences. Use actual Terraform resource type names (aws_iam_role, helm_release, kubernetes_service_account, etc.). Describe internal wiring, not just what the module "does"
+- features: Array of 3-7 strings, each starting with a verb. MUST describe WHAT is created/configured, not just the verb alone.
+  - BAD: "Creates", "Configures", "Supports", "Manages"
+  - GOOD: "Creates ACM certificate with DNS validation in Route53", "Configures IRSA with OIDC provider trust for Kubernetes service accounts", "Supports wildcard certificates via subject alternative names"
+- conditionalUsage: ONLY for trigger variables — variables with a contains([...], var.X) validation that have NO default value. Boolean variables (true/false) are NOT triggers. Return empty array if no such variables exist.
+  - Each group has: name (human-readable), triggerVar, triggerValue (exact string from contains()), variables (conditional vars required for this value)
 - IMPORTANT: Create an entry for EVERY possible value of each trigger variable
 - If there are no trigger variables, return empty array for conditionalUsage
 
@@ -260,31 +273,34 @@ function generateReadme(dir, parsed, context) {
   // Build conditional usage sections
   let conditionalUsageSections = '';
   if (parsed.conditionalUsage && parsed.conditionalUsage.length > 0) {
-    conditionalUsageSections = parsed.conditionalUsage.map(usage => {
-      // Include required vars, trigger vars, and the conditional variables for this usage, sorted alphabetically
-      const allVars = [
-        ...requiredVars.map(v => v.name),
-        ...triggerVars.map(v => v.name),
-        ...usage.variables
-      ].sort((a, b) => a.localeCompare(b));
-      const maxVarLength = Math.max(...allVars.map(v => v.length));
+    const validTriggerNames = new Set(triggerVars.map(v => v.name));
+    conditionalUsageSections = parsed.conditionalUsage
+      .filter(usage => usage.triggerValue && validTriggerNames.has(usage.triggerVar))
+      .map(usage => {
+        // Include required vars, trigger vars, and the conditional variables for this usage, sorted alphabetically
+        const allVars = [
+          ...requiredVars.map(v => v.name),
+          ...triggerVars.map(v => v.name),
+          ...usage.variables
+        ].sort((a, b) => a.localeCompare(b));
+        const maxVarLength = Math.max(...allVars.map(v => v.length));
 
-      const varsBlock = allVars.map(varName => {
-        const isTrigger = varName === usage.triggerVar;
-        const isConditional = usage.variables.includes(varName);
+        const varsBlock = allVars.map(varName => {
+          const isTrigger = varName === usage.triggerVar;
+          const isConditional = usage.variables.includes(varName);
 
-        let value;
-        if (isTrigger) {
-          value = `"${usage.triggerValue}"`;
-        } else {
-          value = `"your-${varName.replace(/_/g, '-')}"`;
-        }
+          let value;
+          if (isTrigger) {
+            value = `"${usage.triggerValue}"`;
+          } else {
+            value = `"your-${varName.replace(/_/g, '-')}"`;
+          }
 
-        const comment = isConditional ? `  # Required when ${usage.triggerVar} = "${usage.triggerValue}"` : '';
-        return `  ${varName.padEnd(maxVarLength)} = ${value}${comment}`;
-      }).join('\n');
+          const comment = isConditional ? `  # Required when ${usage.triggerVar} = "${usage.triggerValue}"` : '';
+          return `  ${varName.padEnd(maxVarLength)} = ${value}${comment}`;
+        }).join('\n');
 
-      return `### Usage with ${usage.name}
+        return `### Usage with ${usage.name}
 
 \`\`\`hcl
 module "${moduleName}" {
@@ -293,7 +309,7 @@ module "${moduleName}" {
 ${varsBlock}
 }
 \`\`\``;
-    }).join('\n\n');
+      }).join('\n\n');
   }
 
   const firstOutput = outputs[0] || 'id';
@@ -317,7 +333,7 @@ ${varsBlock}
 ## Description
 
 ${parsed.description}
-
+${parsed.architecture ? `\n## Architecture\n\n${parsed.architecture}\n` : ''}
 ## Features
 
 ${parsed.features.map(f => `- ${f}`).join('\n')}
@@ -349,6 +365,24 @@ resource "example_resource" "this" {
 
 ${tfDocsSection}
 `;
+
+  // Embed ai-metadata as HTML comment — invisible in GitHub, parseable by AI tools.
+  // The contentHash allows downstream consumers and the generator itself to detect stale metadata.
+  const { conditionalVars, optionalVars, contentHash } = context;
+  const aiMetadata = {
+    name: moduleName,
+    description: parsed.description,
+    architecture: parsed.architecture || '',
+    features: parsed.features,
+    inputs: [...requiredVars, ...triggerVars, ...(conditionalVars || []), ...(optionalVars || [])].map(v => ({
+      name: v.name,
+      description: v.description,
+      required: !v.hasDefault,
+    })),
+    outputs,
+    hash: contentHash,
+  };
+  readme += `\n<!-- BEGIN_AI_METADATA\n${JSON.stringify(aiMetadata, null, 2)}\nEND_AI_METADATA -->\n`;
 
   return readme;
 }
