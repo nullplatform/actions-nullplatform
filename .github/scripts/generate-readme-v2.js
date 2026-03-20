@@ -156,6 +156,24 @@ async function generateReadmeForDirectory(dir, options) {
       console.log(`   Files found: ${Object.keys(context.files).length}`);
     }
 
+    // Cache check: if README exists with matching hash, skip LLM call
+    if (context.contentHash) {
+      const readmePath = path.join(dir, 'README.md');
+      if (fs.existsSync(readmePath)) {
+        const existing = fs.readFileSync(readmePath, 'utf-8');
+        const metaMatch = existing.match(/<!-- BEGIN_AI_METADATA\n([\s\S]*?)\nEND_AI_METADATA -->/);
+        if (metaMatch) {
+          try {
+            const cached = JSON.parse(metaMatch[1]);
+            if (cached.hash === context.contentHash) {
+              console.log(`   ⚡ Skipped (no changes detected)`);
+              return true;
+            }
+          } catch (_) { /* invalid JSON, regenerate */ }
+        }
+      }
+    }
+
     // Get prompts
     const systemPrompt = generator.getSystemPrompt();
     const userPrompt = generator.getUserPrompt(context);
