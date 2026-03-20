@@ -1,0 +1,60 @@
+name: PR Checks - Terraform
+
+on:
+  workflow_call:
+    inputs:
+      minimum_severity:
+        description: 'Minimum severity for tfsec (CRITICAL, HIGH, MEDIUM, LOW)'
+        required: false
+        type: string
+        default: 'HIGH'
+      upload_sarif:
+        description: 'Upload SARIF results to GitHub Security tab'
+        required: false
+        type: boolean
+        default: true
+      post_comment:
+        description: 'Post comment on PR if tfsec scan fails'
+        required: false
+        type: boolean
+        default: true
+      run_tests:
+        description: 'Run tofu test on specified modules'
+        required: false
+        type: boolean
+        default: false
+      modules:
+        description: 'JSON array of module paths to test (e.g. ["module/a", "module/b"])'
+        required: false
+        type: string
+        default: ''
+      tofu_version:
+        description: 'OpenTofu version for tofu-test'
+        required: false
+        type: string
+        default: '1.10.6'
+
+jobs:
+  lint:
+    name: Lint & Validate
+    uses: nullplatform/actions-nullplatform/.github/workflows/tofu-lint.yml@main
+
+  security:
+    name: Security Scan
+    uses: nullplatform/actions-nullplatform/.github/workflows/tfsec.yml@main
+    with:
+      minimum_severity: ${{ inputs.minimum_severity }}
+      upload_sarif: ${{ inputs.upload_sarif }}
+      post_comment: ${{ inputs.post_comment }}
+    permissions:
+      contents: read
+      pull-requests: write
+      security-events: write
+
+  test:
+    if: ${{ inputs.run_tests && inputs.modules != '' }}
+    name: Tests
+    uses: nullplatform/actions-nullplatform/.github/workflows/tofu-test.yml@main
+    with:
+      modules: ${{ inputs.modules }}
+      tofu_version: ${{ inputs.tofu_version }}
