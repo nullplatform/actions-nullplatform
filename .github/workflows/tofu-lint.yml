@@ -2,6 +2,12 @@ name: tofu-lint
 
 on:
   workflow_call:
+    inputs:
+      skip_backend:
+        description: 'Run tofu init with -backend=false (for repos with remote backends)'
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   build:
@@ -14,7 +20,7 @@ jobs:
         with:
           tofu_version: v1.10.5
       - name: tofu init
-        run: tofu init
+        run: tofu init ${{ inputs.skip_backend && '-backend=false' || '' }}
       - name: tofu fmt
         run: tofu fmt -check
       - name: tofu validate
