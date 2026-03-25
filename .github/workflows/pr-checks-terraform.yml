@@ -33,11 +33,18 @@ on:
         required: false
         type: string
         default: '1.10.6'
+      skip_backend:
+        description: 'Run tofu init with -backend=false (for repos with remote backends)'
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   lint:
     name: Lint & Validate
     uses: nullplatform/actions-nullplatform/.github/workflows/tofu-lint.yml@main
+    with:
+      skip_backend: ${{ inputs.skip_backend }}
 
   security:
     name: Security Scan
