@@ -3,31 +3,17 @@ name: Docker Build and Push to ECR
 on:
   workflow_call:
     inputs:
-      ecr_registry:
-        description: 'ECR registry URL'
-        required: false
-        type: string
-        default: 'public.ecr.aws/nullplatform'
-      aws_region:
-        description: 'AWS region for ECR'
-        required: false
-        type: string
-        default: 'us-east-1'
       platforms:
         description: 'Target platforms for multi-arch build (passed as DOCKER_PLATFORMS env var to make)'
         required: false
         type: string
         default: 'linux/amd64,linux/arm64'
     secrets:
-      aws_role_arn:
-        description: 'AWS IAM Role ARN for OIDC authentication'
-        required: true
       nullplatform_api_key:
         description: 'Nullplatform API key for CLI authentication'
         required: true
 
 permissions:
-  id-token: write
   contents: read
 
 jobs:
@@ -49,7 +35,6 @@ jobs:
     needs: prepare
     env:
       ASSET_TYPE: docker-image
-      DOCKER_REGISTRY: ${{ inputs.ecr_registry }}
       DOCKER_PLATFORMS: ${{ inputs.platforms }}
     steps:
       - name: Checkout repository
@@ -58,15 +43,6 @@ jobs:
         uses: docker/setup-qemu-action@v3
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.aws_role_arn }}
-          aws-region: ${{ inputs.aws_region }}
-      - name: Login to Amazon ECR Public
-        uses: aws-actions/amazon-ecr-login@v2
-        with:
-          registry-type: public
       - name: Build asset
         run: make build
       - name: Push asset
