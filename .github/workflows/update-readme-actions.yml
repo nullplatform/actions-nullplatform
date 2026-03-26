@@ -58,12 +58,26 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
       - name: Create Pull Request
-        uses: peter-evans/create-pull-request@v7
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          add-paths: README.md
-          commit-message: "docs: update available actions in README"
-          branch: automation/update-readme-actions
-          title: "docs: update available actions in README"
-          body: "Automated update of available actions documentation."
-          delete-branch: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+
+          git add README.md
+
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+
+          BRANCH="automation/update-readme-actions"
+          git checkout -b "$BRANCH"
+          git commit -m "docs: update available actions in README"
+          git push origin "$BRANCH"
+
+          gh pr create \
+            --title "docs: update available actions in README" \
+            --body "Automated update of available actions documentation." \
+            --base main \
+            --head "$BRANCH" || echo "PR already exists"
