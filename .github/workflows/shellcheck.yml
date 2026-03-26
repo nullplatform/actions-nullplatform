@@ -1,0 +1,32 @@
+name: shellcheck
+
+on:
+  workflow_call:
+    inputs:
+      script_dirs:
+        description: 'Space-separated dirs/files to scan. When empty, finds *.sh recursively.'
+        required: false
+        type: string
+        default: ''
+      severity:
+        description: 'Minimum severity (error, warning, info, style)'
+        required: false
+        type: string
+        default: 'error'
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run ShellCheck
+        env:
+          SCRIPT_DIRS: ${{ inputs.script_dirs }}
+          SEVERITY: ${{ inputs.severity }}
+        run: |
+          if [ -n "$SCRIPT_DIRS" ]; then
+            find $SCRIPT_DIRS -type f | xargs shellcheck --severity="$SEVERITY"
+          else
+            find . -name "*.sh" -not -path "./.git/*" | xargs shellcheck --severity="$SEVERITY"
+          fi
