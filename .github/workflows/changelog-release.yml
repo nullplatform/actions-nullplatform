@@ -45,9 +45,11 @@ jobs:
       has_changes: ${{ steps.changelog.outputs.has_changes }}
       new_version: ${{ steps.changelog.outputs.new_version }}
       changelog: ${{ steps.changelog.outputs.changelog }}
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}

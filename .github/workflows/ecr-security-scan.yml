@@ -33,6 +33,8 @@ jobs:
   scan:
     name: Scan ECR Images
     runs-on: ubuntu-24.04
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
       - name: Configure AWS credentials

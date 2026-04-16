@@ -21,8 +21,10 @@ jobs:
   testing:
     name: Testing
     runs-on: ubuntu-24.04
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Go (with version file)
         if: inputs.go-version == ''

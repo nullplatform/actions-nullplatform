@@ -4,19 +4,21 @@ on:
   workflow_call:
 
 jobs:
-  build: 
+  build:
     runs-on: ubuntu-24.04
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
     - name: Checkout (PR)
       if: github.event_name == 'pull_request'
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
       with:
         fetch-depth: 0
         ref: ${{ github.event.pull_request.head.ref }}
 
     - name: Checkout (push/dispatch)
       if: github.event_name != 'pull_request'
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
       with:
         fetch-depth: 0
         ref: ${{ github.ref_name }}
