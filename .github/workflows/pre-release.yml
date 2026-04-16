@@ -4,8 +4,10 @@ on:
   workflow_call:
 
 jobs:
-  build: 
+  build:
     runs-on: ubuntu-24.04
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
        - name: Checkout repository
          uses: actions/checkout@v4
@@ -16,7 +18,7 @@ jobs:
        - name: Setup Node
          uses: actions/setup-node@v4
          with:
-          node-version: 20
+          node-version: 24
        - name: Post changelog preview comment
          env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

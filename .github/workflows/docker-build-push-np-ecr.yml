@@ -21,6 +21,7 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       NULLPLATFORM_API_KEY: ${{ secrets.nullplatform_api_key }}
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -36,6 +37,7 @@ jobs:
     env:
       ASSET_TYPE: docker-image
       DOCKER_PLATFORMS: ${{ inputs.platforms }}
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -55,6 +57,7 @@ jobs:
     env:
       NULLPLATFORM_API_KEY: ${{ secrets.nullplatform_api_key }}
       BUILD_RESULT: ${{ needs.build-and-push.result }}
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - name: Install nullplatform cli
         run: curl https://cli.nullplatform.com/install.sh | sh

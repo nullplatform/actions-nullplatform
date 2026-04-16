@@ -22,6 +22,8 @@ jobs:
       max-parallel: 2
       matrix:
         module: ${{ fromJSON(inputs.modules) }}
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - uses: actions/checkout@v4
 

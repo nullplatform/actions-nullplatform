@@ -54,6 +54,8 @@ jobs:
   build-and-push:
     name: Build and Push
     runs-on: ubuntu-24.04
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
       - name: Checkout repository
