@@ -15,12 +15,17 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Validate branch name
+        env:
+          BRANCH: ${{ github.head_ref }}
+          PATTERN: ${{ inputs.pattern }}
         run: |
-          BRANCH="${{ github.head_ref }}"
-          PATTERN="${{ inputs.pattern }}"
-
           if [[ -z "$BRANCH" ]]; then
             echo "No branch name found (not a pull request?)"
+            exit 0
+          fi
+
+          if [[ "$BRANCH" == release-please--* ]]; then
+            echo "Skipping validation for release-please branch: $BRANCH"
             exit 0
           fi
 
