@@ -3,6 +3,11 @@ name: tofu-release
 on:
   workflow_call:
     inputs:
+      release-type:
+        description: 'Release Please release type (e.g. terraform-module, simple, node)'
+        required: false
+        type: string
+        default: terraform-module
       update_readme_versions:
         description: 'Update version references in README files after release'
         required: false
@@ -30,7 +35,7 @@ jobs:
         id: release
         uses: googleapis/release-please-action@v4
         with:
-          release-type: terraform-module
+          release-type: ${{ inputs.release-type }}
 
   update-readme-versions:
     name: Update README Versions
