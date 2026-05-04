@@ -76,7 +76,7 @@ jobs:
           BRANCH="automation/update-readme-actions"
           git checkout -b "$BRANCH"
           git commit -m "docs: update available actions in README"
-          git push origin "$BRANCH"
+          git push --force origin "$BRANCH"
 
           gh pr create \
             --title "docs: update available actions in README" \
