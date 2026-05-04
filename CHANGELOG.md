@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.1](https://github.com/nullplatform/actions-nullplatform/compare/v1.0.0...v1.0.1) (2026-05-04)
+
+
+### Bug Fixes
+
+* force push automation branch in update-readme-actions ([b58334e](https://github.com/nullplatform/actions-nullplatform/commit/b58334eb9c60651df9268d21d1245acc6e58b496))
+* force push automation branch to avoid rejected push on re-runs ([2fa3c51](https://github.com/nullplatform/actions-nullplatform/commit/2fa3c513fda9fcee856fd9933673720b4439bff5))
+
 ## 1.0.0 (2026-04-30)
 
 
