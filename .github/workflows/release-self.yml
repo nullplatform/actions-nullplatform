@@ -14,14 +14,14 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - id: release
-        uses: googleapis/release-please-action@v4
+        uses: googleapis/release-please-action@v5
         with:
           release-type: simple
           initial-version: 1.0.0
 
       - name: Checkout for tag update
         if: ${{ steps.release.outputs.release_created == 'true' }}
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 

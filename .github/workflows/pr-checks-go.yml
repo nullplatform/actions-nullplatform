@@ -28,13 +28,13 @@ jobs:
 
       - name: Set up Go (with version file)
         if: inputs.go-version == ''
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v6
         with:
           go-version-file: 'go.mod'
 
       - name: Set up Go (with explicit version)
         if: inputs.go-version != ''
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v6
         with:
           go-version: ${{ inputs.go-version }}
 

@@ -78,7 +78,7 @@ jobs:
 
       - name: Upload SARIF file
         if: steps.modules.outputs.has_tf_files == 'true' && inputs.upload_sarif && hashFiles('results.sarif') != ''
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: results.sarif
           category: tfsec
@@ -86,7 +86,7 @@ jobs:
 
       - name: Post failure comment
         if: steps.tfsec.outputs.exit_code == '1' && inputs.post_comment && github.event_name == 'pull_request'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             github.rest.issues.createComment({

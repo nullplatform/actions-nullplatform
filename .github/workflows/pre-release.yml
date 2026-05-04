@@ -16,7 +16,7 @@ jobs:
        - name: Fetch tags
          run: git fetch --tags --force
        - name: Setup Node
-         uses: actions/setup-node@v4
+         uses: actions/setup-node@v6
          with:
           node-version: 24
        - name: Post changelog preview comment
