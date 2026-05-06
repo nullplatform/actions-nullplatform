@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.2](https://github.com/nullplatform/actions-nullplatform/compare/v1.0.1...v1.0.2) (2026-05-06)
+
+
+### Bug Fixes
+
+* make release-please workflow generic via release-type input ([a27ada5](https://github.com/nullplatform/actions-nullplatform/commit/a27ada58c983bc9eb9496980693f8c868da1229e))
+
 ## [1.0.1](https://github.com/nullplatform/actions-nullplatform/compare/v1.0.0...v1.0.1) (2026-05-04)
 
 
