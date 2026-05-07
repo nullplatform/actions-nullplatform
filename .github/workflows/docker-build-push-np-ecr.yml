@@ -35,12 +35,15 @@ jobs:
     runs-on: ubuntu-24.04
     needs: prepare
     env:
+      NULLPLATFORM_API_KEY: ${{ secrets.nullplatform_api_key }}
       ASSET_TYPE: docker-image
       DOCKER_PLATFORMS: ${{ inputs.platforms }}
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+      - name: Install nullplatform cli
+        run: curl https://cli.nullplatform.com/install.sh | sh
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4
       - name: Set up Docker Buildx
