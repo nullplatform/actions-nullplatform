@@ -1,0 +1,30 @@
+name: Sign container image
+description: Signs a container image in ECR Public using cosign and AWS KMS
+
+inputs:
+  image-uri:
+    required: true
+    description: Full image URI with digest (public.ecr.aws/nullplatform/repo@sha256:...)
+  kms-key-arn:
+    required: true
+    description: ARN of the KMS key to use for signing (without awskms:/// prefix)
+  aws-region:
+    required: false
+    default: 'us-east-1'
+    description: AWS region of the KMS key
+
+runs:
+  using: composite
+  steps:
+    - name: Install cosign
+      uses: sigstore/cosign-installer@v4.1.2
+
+    - name: Sign image
+      shell: bash
+      env:
+        COSIGN_YES: "true"
+        AWS_REGION: ${{ inputs.aws-region }}
+        KMS_KEY_ARN: ${{ inputs.kms-key-arn }}
+        IMAGE_URI: ${{ inputs.image-uri }}
+      run: |
+        cosign sign --key "awskms:///$KMS_KEY_ARN" "$IMAGE_URI"
