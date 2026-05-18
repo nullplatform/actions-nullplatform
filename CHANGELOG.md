@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.1.0](https://github.com/nullplatform/actions-nullplatform/compare/v1.0.2...v1.1.0) (2026-05-18)
+
+
+### Features
+
+* **actions:** add sign-image composite action for cosign + KMS signing ([62180f8](https://github.com/nullplatform/actions-nullplatform/commit/62180f86f1a5dceb5e57e94704721d9c0ac656e6))
+* **actions:** add sign-image composite action for cosign + KMS signing ([dff9979](https://github.com/nullplatform/actions-nullplatform/commit/dff9979752d763854ff94b0488b0e433de913de8))
+
+
+### Bug Fixes
+
+* install np cli and set api key in build-and-push job ([2804f8e](https://github.com/nullplatform/actions-nullplatform/commit/2804f8e2f9d2463aa3080699999330340a61adf6))
+* install np cli and set api key in build-and-push job ([398991f](https://github.com/nullplatform/actions-nullplatform/commit/398991fe1985bfe004ed9c804f7021d1daa524ae))
+
 ## [1.0.2](https://github.com/nullplatform/actions-nullplatform/compare/v1.0.1...v1.0.2) (2026-05-06)
 
 
