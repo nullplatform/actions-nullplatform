@@ -7,7 +7,7 @@ inputs:
     description: Full image URI with digest (public.ecr.aws/nullplatform/repo@sha256:...)
   kms-key-arn:
     required: true
-    description: ARN of the KMS key to use for signing (without awskms:/// prefix)
+    description: Full cosign KMS key URI (e.g. awskms:///arn:aws:kms:region:account:alias/name)
   aws-region:
     required: false
     default: 'us-east-1'
@@ -27,4 +27,4 @@ runs:
         KMS_KEY_ARN: ${{ inputs.kms-key-arn }}
         IMAGE_URI: ${{ inputs.image-uri }}
       run: |
-        cosign sign --key "awskms:///$KMS_KEY_ARN" "$IMAGE_URI"
+        cosign sign --key "$KMS_KEY_ARN" "$IMAGE_URI"
