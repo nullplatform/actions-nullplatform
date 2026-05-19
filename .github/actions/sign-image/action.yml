@@ -27,4 +27,5 @@ runs:
         KMS_KEY_ARN: ${{ inputs.kms-key-arn }}
         IMAGE_URI: ${{ inputs.image-uri }}
       run: |
+        echo "KMS key prefix (first 12 chars): ${KMS_KEY_ARN:0:12}"
         cosign sign --key "awskms:///$KMS_KEY_ARN" "$IMAGE_URI"
