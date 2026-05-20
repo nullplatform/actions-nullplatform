@@ -18,8 +18,8 @@ jobs:
 
       - name: Install actionlint
         run: |
-          wget -q https://github.com/rhysd/actionlint/releases/download/v1.7.7/actionlint_1.7.7_linux_amd64.tar.gz
-          tar xzf actionlint_1.7.7_linux_amd64.tar.gz actionlint
+          wget -q https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz
+          tar xzf actionlint_1.7.12_linux_amd64.tar.gz actionlint
 
       - name: Run actionlint
         run: |
