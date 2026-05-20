@@ -41,6 +41,10 @@ on:
         required: false
         type: string
         default: ''
+    outputs:
+      image_digest:
+        description: 'OCI image-index digest (sha256:...)'
+        value: ${{ jobs.build-and-push.outputs.digest }}
     secrets:
       aws_role_arn:
         description: 'AWS IAM Role ARN for OIDC authentication'
@@ -54,6 +58,8 @@ jobs:
   build-and-push:
     name: Build and Push
     runs-on: ubuntu-24.04
+    outputs:
+      digest: ${{ steps.digest.outputs.digest }}
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
@@ -108,3 +114,14 @@ jobs:
           build-args: ${{ inputs.build_args }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          metadata-file: /tmp/meta.json
+
+      - name: Extract image digest
+        id: digest
+        run: |
+          DIGEST=$(jq -r '."containerimage.digest" // empty' /tmp/meta.json)
+          if [[ -z "$DIGEST" ]]; then
+            echo "::error::containerimage.digest missing from buildx metadata"
+            exit 1
+          fi
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
