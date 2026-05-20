@@ -17,7 +17,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Run actionlint
-        uses: rhysd/actionlint-action@v1
+        uses: devops-actions/actionlint@v0.1.9
 
   secret-scan:
     name: Scan for credentials
