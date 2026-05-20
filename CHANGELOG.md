@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.1.0](https://github.com/nullplatform/actions-nullplatform/compare/v1.0.2...v1.1.0) (2026-05-20)
+
+
+### Features
+
+* **actions:** add sign-image composite action for cosign + KMS signing ([62180f8](https://github.com/nullplatform/actions-nullplatform/commit/62180f86f1a5dceb5e57e94704721d9c0ac656e6))
+* **actions:** add sign-image composite action for cosign + KMS signing ([dff9979](https://github.com/nullplatform/actions-nullplatform/commit/dff9979752d763854ff94b0488b0e433de913de8))
+* **docker-build-push-ecr:** expose image digest as workflow output ([83112a5](https://github.com/nullplatform/actions-nullplatform/commit/83112a5382500ada061b1cb7e5cfc7bb587eb453))
+* **docker-build-push-ecr:** expose image digest as workflow output ([3132795](https://github.com/nullplatform/actions-nullplatform/commit/3132795e9e02cc1a84d7949cf11b18bd6fd1c5ea))
+* **sign-image:** configure AWS credentials inside composite action ([d7038c4](https://github.com/nullplatform/actions-nullplatform/commit/d7038c49ac3eca1ec89376b5a59a5edf7c9b2d2f))
+
+
+### Bug Fixes
+
+* install np cli and set api key in build-and-push job ([2804f8e](https://github.com/nullplatform/actions-nullplatform/commit/2804f8e2f9d2463aa3080699999330340a61adf6))
+* install np cli and set api key in build-and-push job ([398991f](https://github.com/nullplatform/actions-nullplatform/commit/398991fe1985bfe004ed9c804f7021d1daa524ae))
+* **sign-image:** add --recursive to sign per-platform manifests ([42a7efe](https://github.com/nullplatform/actions-nullplatform/commit/42a7efeb925f41aa187859ac027e4d29cf9b1fe9))
+* **sign-image:** add --recursive to sign per-platform manifests ([d44436a](https://github.com/nullplatform/actions-nullplatform/commit/d44436ac8475d809be1ff6ae5e93d1a68a5f6da4))
+
 ## [1.0.2](https://github.com/nullplatform/actions-nullplatform/compare/v1.0.1...v1.0.2) (2026-05-06)
 
 
