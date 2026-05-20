@@ -121,7 +121,7 @@ jobs:
                 grep -o '"version": *"[^"]*"' "$dir/$file" | head -1 | sed 's/.*: *"\([^"]*\)".*/\1/'
                 ;;
               VERSION)
-                cat "$dir/$file" | tr -d '[:space:]'
+                tr -d '[:space:]' < "$dir/$file"
                 ;;
             esac
           }
@@ -378,7 +378,7 @@ jobs:
           git add -A
           if ! git diff --cached --quiet; then
             git commit -m "$COMMIT_MESSAGE"
-            git push origin ${GITHUB_REF#refs/heads/}
+            git push origin "${GITHUB_REF#refs/heads/}"
           fi
 
       - name: Create and push tags

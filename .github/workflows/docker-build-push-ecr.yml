@@ -94,7 +94,7 @@ jobs:
           VERSION=$(echo "${TAG}" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' || echo "${TAG}")
           TAGS="${REGISTRY}/${IMAGE}:${VERSION}"
 
-          echo "tags=${TAGS}" >> $GITHUB_OUTPUT
+          echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
           echo "Generated tags: ${TAGS}"
 
       - name: Build and push Docker image

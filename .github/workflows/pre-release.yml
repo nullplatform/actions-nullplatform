@@ -22,8 +22,9 @@ jobs:
        - name: Post changelog preview comment
          env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_REF: ${{ github.head_ref }}
          run: |
-          git checkout -b "${{ github.head_ref }}"
+          git checkout -b "$HEAD_REF"
           unset GITHUB_ACTIONS
           npx --yes semantic-release-github-pr
        

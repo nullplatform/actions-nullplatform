@@ -29,10 +29,10 @@ jobs:
           DIRS=$(find . -name "*.tf" -not -path "./.terraform/*" -exec dirname {} \; | sort -u | tr '\n' ' ')
           if [ -z "$DIRS" ]; then
             echo "No .tf files found, skipping scan"
-            echo "has_tf_files=false" >> $GITHUB_OUTPUT
+            echo "has_tf_files=false" >> "$GITHUB_OUTPUT"
           else
             echo "Found .tf files in: $DIRS"
-            echo "has_tf_files=true" >> $GITHUB_OUTPUT
+            echo "has_tf_files=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Run Trivy IaC scan
