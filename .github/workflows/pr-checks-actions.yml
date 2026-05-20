@@ -16,8 +16,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Install actionlint
+        run: |
+          wget -q https://github.com/rhysd/actionlint/releases/download/v1.7.7/actionlint_1.7.7_linux_amd64.tar.gz
+          tar xzf actionlint_1.7.7_linux_amd64.tar.gz actionlint
+
       - name: Run actionlint
-        uses: devops-actions/actionlint@v0.1.9
+        run: |
+          ./actionlint -ignore 'unknown permission scope "models"'
 
   secret-scan:
     name: Scan for credentials
