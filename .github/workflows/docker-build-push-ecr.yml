@@ -104,6 +104,7 @@ jobs:
           echo "Generated tags: ${TAGS}"
 
       - name: Build and push Docker image
+        id: build
         uses: docker/build-push-action@v7
         with:
           context: ${{ inputs.context }}
@@ -114,12 +115,11 @@ jobs:
           build-args: ${{ inputs.build_args }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          metadata-file: /tmp/meta.json
 
       - name: Extract image digest
         id: digest
         run: |
-          DIGEST=$(jq -r '."containerimage.digest" // empty' /tmp/meta.json)
+          DIGEST=$(echo '${{ steps.build.outputs.metadata }}' | jq -r '."containerimage.digest" // empty')
           if [[ -z "$DIGEST" ]]; then
             echo "::error::containerimage.digest missing from buildx metadata"
             exit 1
