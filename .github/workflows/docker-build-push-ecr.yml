@@ -119,7 +119,7 @@ jobs:
       - name: Extract image digest
         id: digest
         run: |
-          DIGEST=$(echo '${{ steps.build.outputs.metadata }}' | jq -r '."containerimage.digest" // empty')
+          DIGEST="${{ steps.build.outputs.digest }}"
           if [[ -z "$DIGEST" ]]; then
             echo "::error::digest missing from build output"
             exit 1
