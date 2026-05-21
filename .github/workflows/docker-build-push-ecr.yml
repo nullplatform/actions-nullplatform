@@ -121,7 +121,7 @@ jobs:
         run: |
           DIGEST=$(echo '${{ steps.build.outputs.metadata }}' | jq -r '."containerimage.digest" // empty')
           if [[ -z "$DIGEST" ]]; then
-            echo "::error::containerimage.digest missing from buildx metadata"
+            echo "::error::digest missing from build output"
             exit 1
           fi
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
