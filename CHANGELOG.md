@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.1](https://github.com/nullplatform/actions-nullplatform/compare/v1.2.0...v1.2.1) (2026-05-21)
+
+
+### Bug Fixes
+
+* **docker-build-push-ecr:** use build step digest output directly for multi-platform builds ([5505a3f](https://github.com/nullplatform/actions-nullplatform/commit/5505a3f7b03ce57eeb3b445d3c610f72864979ce))
+* **docker-build-push-ecr:** use build step digest output directly for multi-platform builds ([f92d1a4](https://github.com/nullplatform/actions-nullplatform/commit/f92d1a4600215923b70ef1e3baef7ecfe64cb6c6))
+
 ## [1.2.0](https://github.com/nullplatform/actions-nullplatform/compare/v1.1.1...v1.2.0) (2026-05-21)
 
 
