@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.1](https://github.com/nullplatform/actions-nullplatform/compare/v1.1.0...v1.1.1) (2026-05-21)
+
+
+### Bug Fixes
+
+* **docker-build-push-ecr:** use build step output for digest instead of metadata-file ([7dcf2ae](https://github.com/nullplatform/actions-nullplatform/commit/7dcf2ae823e70eb0a94d4f27c82c776e4713cf63))
+* **docker-build-push-ecr:** use build step output for digest instead of metadata-file ([cad0d0a](https://github.com/nullplatform/actions-nullplatform/commit/cad0d0a8a1779231fc4c5700fd9400e70fba27e6))
+
 ## [1.1.0](https://github.com/nullplatform/actions-nullplatform/compare/v1.0.2...v1.1.0) (2026-05-20)
 
 
