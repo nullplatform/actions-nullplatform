@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.0](https://github.com/nullplatform/actions-nullplatform/compare/v1.2.1...v1.3.0) (2026-05-21)
+
+
+### Features
+
+* **security-scan:** add SARIF upload to docker and ECR security scans ([fdb8e24](https://github.com/nullplatform/actions-nullplatform/commit/fdb8e24449cad2526726edbb16113362b09a572f))
+
 ## [1.2.1](https://github.com/nullplatform/actions-nullplatform/compare/v1.2.0...v1.2.1) (2026-05-21)
 
 
