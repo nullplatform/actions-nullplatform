@@ -123,7 +123,7 @@ with:
 
 ### docker-security-scan
 
-Scans Docker images for security vulnerabilities using Trivy before deployment. Builds the image locally and checks for known CVEs with configurable severity thresholds. Use this in CI pipelines to prevent deploying vulnerable containers.
+Scans Docker images for security vulnerabilities using Trivy before deployment. Builds the image locally and checks for known CVEs with configurable severity thresholds. Generates SARIF reports for the GitHub Security tab. Use this in CI pipelines to prevent deploying vulnerable containers.
 
 **Inputs**
 
@@ -135,6 +135,7 @@ Scans Docker images for security vulnerabilities using Trivy before deployment. 
 | severity | Minimum severity to report (CRITICAL,HIGH,MEDIUM,LOW) | No | CRITICAL,HIGH |
 | build_args | Docker build arguments (multiline, one per line: KEY=VALUE) | No | '' |
 | exit_code | Exit code when vulnerabilities are found (0 to not fail) | No | 1 |
+| upload_sarif | Upload SARIF results to GitHub Security tab | No | true |
 
 **Secrets required**
 - None
@@ -151,11 +152,12 @@ with:
   build_args: |
     NODE_VERSION=20
     BUILD_ENV=production
+  upload_sarif: true
 ```
 
 ### ecr-security-scan
 
-Scans published ECR images for vulnerabilities on a schedule or manually. Finds the latest semver tag for each specified image, scans for critical/high vulnerabilities, and sends Slack alerts if issues are found. Use this for continuous security monitoring of production images.
+Scans published ECR images for vulnerabilities on a schedule or manually. Finds the latest semver tag for each specified image, scans for critical/high vulnerabilities, sends Slack alerts if issues are found, and generates SARIF reports for the GitHub Security tab. Use this for continuous security monitoring of production images.
 
 **Inputs**
 
@@ -164,6 +166,7 @@ Scans published ECR images for vulnerabilities on a schedule or manually. Finds 
 | image_names | JSON array of image names to scan (e.g., ["k8s-logs-controller", "k8s-traffic-manager"]) | Yes | - |
 | ecr_registry | ECR registry URL | No | public.ecr.aws/nullplatform |
 | severity | Minimum severity to report (CRITICAL,HIGH,MEDIUM,LOW) | No | CRITICAL,HIGH |
+| upload_sarif | Upload SARIF results to GitHub Security tab | No | true |
 
 **Secrets required**
 - `aws_role_arn`: AWS IAM Role ARN for OIDC authentication
@@ -177,6 +180,7 @@ with:
   image_names: '["my-app", "my-worker"]'
   ecr_registry: 'public.ecr.aws/myorg'
   severity: 'CRITICAL,HIGH'
+  upload_sarif: true
 secrets:
   aws_role_arn: ${{ secrets.AWS_ROLE_ARN }}
   slack_webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}

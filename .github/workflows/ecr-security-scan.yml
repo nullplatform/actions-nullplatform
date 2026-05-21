@@ -17,6 +17,11 @@ on:
         required: false
         type: string
         default: 'CRITICAL,HIGH'
+      upload_sarif:
+        description: 'Upload SARIF results to GitHub Security tab'
+        required: false
+        type: boolean
+        default: true
     secrets:
       aws_role_arn:
         description: 'AWS IAM Role ARN for OIDC authentication'
@@ -28,6 +33,7 @@ on:
 permissions:
   id-token: write
   contents: read
+  security-events: write
 
 jobs:
   scan:
@@ -88,6 +94,11 @@ jobs:
             # Run Trivy and capture output
             RESULT=$(trivy image --severity "${SEVERITY}" --ignore-unfixed --format json "${FULL_IMAGE}" 2>/dev/null || echo "{}")
 
+            if [ "${{ inputs.upload_sarif }}" == "true" ]; then
+              mkdir -p sarif-results
+              trivy image --severity "${SEVERITY}" --ignore-unfixed --format sarif --output "sarif-results/${IMAGE_NAME}.sarif" "${FULL_IMAGE}" 2>/dev/null || true
+            fi
+
             # Count vulnerabilities
             CRITICAL=$(echo "$RESULT" | jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL")] | length' 2>/dev/null || echo "0")
             HIGH=$(echo "$RESULT" | jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "HIGH")] | length' 2>/dev/null || echo "0")
@@ -105,6 +116,14 @@ jobs:
           # Save report for Slack (escape newlines for JSON)
           REPORT_ESCAPED=$(echo -e "$REPORT" | sed 's/"/\\"/g' | tr '\n' '|' | sed 's/|/\\n/g')
           echo "report=${REPORT_ESCAPED}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload SARIF to GitHub Security tab
+        if: inputs.upload_sarif && hashFiles('sarif-results/') != ''
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: sarif-results/
+          category: trivy-ecr
+        continue-on-error: true
 
       - name: Send Slack alert
         if: steps.scan.outputs.vulnerabilities_found == 'true'
