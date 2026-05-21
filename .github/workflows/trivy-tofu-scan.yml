@@ -1,0 +1,80 @@
+name: trivy-tofu-scan
+
+on:
+  workflow_call:
+    inputs:
+      upload_sarif:
+        description: 'Upload SARIF results to GitHub Security tab'
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  trivy-iac:
+    name: Trivy IaC Scan
+    runs-on: ubuntu-24.04
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Find OpenTofu/Terraform files
+        id: find
+        run: |
+          DIRS=$(find . -name "*.tf" -not -path "./.terraform/*" -exec dirname {} \; | sort -u | tr '\n' ' ')
+          if [ -z "$DIRS" ]; then
+            echo "No .tf files found, skipping scan"
+            echo "has_tf_files=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Found .tf files in: $DIRS"
+            echo "has_tf_files=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run Trivy IaC scan
+        if: steps.find.outputs.has_tf_files == 'true'
+        id: scan
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: 'config'
+          scan-ref: '.'
+          format: 'json'
+          output: 'trivy-results.json'
+          exit-code: '1'
+          severity: 'CRITICAL,HIGH'
+          skip-dirs: '.terraform'
+        continue-on-error: true
+
+      - name: Generate SARIF report
+        if: steps.find.outputs.has_tf_files == 'true' && inputs.upload_sarif
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: 'config'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'results.sarif'
+          severity: 'CRITICAL,HIGH'
+          skip-dirs: '.terraform'
+
+      - name: Upload SARIF to GitHub Security tab
+        if: steps.find.outputs.has_tf_files == 'true' && inputs.upload_sarif && hashFiles('results.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: results.sarif
+          category: trivy-iac
+        continue-on-error: true
+
+      - name: Upload scan results artifact
+        if: steps.find.outputs.has_tf_files == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: trivy-iac-scan-results
+          path: trivy-results.json
+
+      - name: Fail if misconfigurations found
+        if: steps.scan.outcome == 'failure'
+        run: exit 1

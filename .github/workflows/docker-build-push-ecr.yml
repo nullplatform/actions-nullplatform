@@ -100,7 +100,7 @@ jobs:
           VERSION=$(echo "${TAG}" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' || echo "${TAG}")
           TAGS="${REGISTRY}/${IMAGE}:${VERSION}"
 
-          echo "tags=${TAGS}" >> $GITHUB_OUTPUT
+          echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
           echo "Generated tags: ${TAGS}"
 
       - name: Build and push Docker image
@@ -119,7 +119,7 @@ jobs:
       - name: Extract image digest
         id: digest
         run: |
-          DIGEST="${{ steps.build.outputs.digest }}"
+          DIGEST=$(echo '${{ steps.build.outputs.metadata }}' | jq -r '."containerimage.digest" // empty')
           if [[ -z "$DIGEST" ]]; then
             echo "::error::digest missing from build output"
             exit 1

@@ -30,7 +30,7 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
-      models: read  # Required for GitHub Models
+      models: read # actionlint:ignore:permissions
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:

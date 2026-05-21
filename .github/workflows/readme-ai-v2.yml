@@ -45,7 +45,7 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
-      models: read
+      models: read # actionlint:ignore:permissions
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
@@ -92,13 +92,13 @@ jobs:
 
           if [ -z "$CHANGED_FILES" ]; then
             echo "No matching files changed"
-            echo "dirs=" >> $GITHUB_OUTPUT
+            echo "dirs=" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
           DIRS=$(echo "$CHANGED_FILES" | xargs -I {} dirname {} | sort -u | tr '\n' ' ')
           echo "Modified directories: $DIRS"
-          echo "dirs=$DIRS" >> $GITHUB_OUTPUT
+          echo "dirs=$DIRS" >> "$GITHUB_OUTPUT"
 
       - name: Generate READMEs (changed directories)
         if: ${{ !inputs.generate_all && steps.changes.outputs.dirs != '' }}
@@ -108,6 +108,7 @@ jobs:
             TYPE_ARG="--type ${{ inputs.generator_type }}"
           fi
 
+          # shellcheck disable=SC2086
           node .actions-scripts/.github/scripts/generate-readme-v2.js \
             --verbose \
             $TYPE_ARG \
@@ -128,6 +129,7 @@ jobs:
             TYPE_ARG="--type ${{ inputs.generator_type }}"
           fi
 
+          # shellcheck disable=SC2086
           node .actions-scripts/.github/scripts/generate-readme-v2.js \
             --all \
             --base-dir "${{ inputs.base_dir }}" \
