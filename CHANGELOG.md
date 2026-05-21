@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.1](https://github.com/nullplatform/actions-nullplatform/compare/v1.3.0...v1.3.1) (2026-05-21)
+
+
+### Bug Fixes
+
+* **sign-image:** login to ecr public before signing so cosign can push the signature ([57c5ce2](https://github.com/nullplatform/actions-nullplatform/commit/57c5ce2e57d31e45a88373e4567444f608e0445f))
+* **sign-image:** login to ecr public before signing so cosign can push the signature ([b2f1e3c](https://github.com/nullplatform/actions-nullplatform/commit/b2f1e3cda31bf1c18310905c3cd16f9f9e389b1f))
+
 ## [1.3.0](https://github.com/nullplatform/actions-nullplatform/compare/v1.2.1...v1.3.0) (2026-05-21)
 
 
