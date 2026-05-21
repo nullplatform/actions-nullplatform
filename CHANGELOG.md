@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.0](https://github.com/nullplatform/actions-nullplatform/compare/v1.1.1...v1.2.0) (2026-05-21)
+
+
+### Features
+
+* **actions:** add trivy-tofu-scan reusable workflow ([b522300](https://github.com/nullplatform/actions-nullplatform/commit/b5223000aeed39f840f96a5b9bfb2557c3de2f05))
+
 ## [1.1.1](https://github.com/nullplatform/actions-nullplatform/compare/v1.1.0...v1.1.1) (2026-05-21)
 
 
