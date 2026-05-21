@@ -31,9 +31,15 @@ on:
         required: false
         type: number
         default: 1
+      upload_sarif:
+        description: 'Upload SARIF results to GitHub Security tab'
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: read
+  security-events: write
 
 jobs:
   scan:
@@ -63,6 +69,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Run Trivy vulnerability scanner
+        id: scan
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: '${{ inputs.image_name }}:scan'
@@ -70,3 +77,26 @@ jobs:
           exit-code: '${{ inputs.exit_code }}'
           severity: '${{ inputs.severity }}'
           ignore-unfixed: true
+        continue-on-error: true
+
+      - name: Generate SARIF report
+        if: inputs.upload_sarif
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: '${{ inputs.image_name }}:scan'
+          format: 'sarif'
+          output: 'results.sarif'
+          severity: '${{ inputs.severity }}'
+          ignore-unfixed: true
+
+      - name: Upload SARIF to GitHub Security tab
+        if: inputs.upload_sarif && hashFiles('results.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: results.sarif
+          category: trivy-docker-${{ inputs.image_name }}
+        continue-on-error: true
+
+      - name: Fail if vulnerabilities found
+        if: steps.scan.outcome == 'failure'
+        run: exit 1
