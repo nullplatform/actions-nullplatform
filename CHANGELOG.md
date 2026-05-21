@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.2](https://github.com/nullplatform/actions-nullplatform/compare/v1.3.1...v1.3.2) (2026-05-21)
+
+
+### Bug Fixes
+
+* **security-scan:** add actions: read permission required by codeql u… ([2c99588](https://github.com/nullplatform/actions-nullplatform/commit/2c995883d423356338f216215fc13b6bc8380b6a))
+* **security-scan:** add actions: read permission required by codeql upload-sarif ([77df583](https://github.com/nullplatform/actions-nullplatform/commit/77df583d24a95037b43eb7507381a72c82b63162))
+
 ## [1.3.1](https://github.com/nullplatform/actions-nullplatform/compare/v1.3.0...v1.3.1) (2026-05-21)
 
 
