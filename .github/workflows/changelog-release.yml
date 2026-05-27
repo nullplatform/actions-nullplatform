@@ -27,6 +27,15 @@ on:
         description: 'Commit message for version bump'
         type: string
         default: 'chore(release): bump version and update changelog [skip ci]'
+      app_id:
+        description: 'GitHub App ID for generating a token to bypass branch protections (optional)'
+        required: false
+        type: string
+        default: ''
+    secrets:
+      app_private_key:
+        description: 'GitHub App private key (required if app_id is set)'
+        required: false
     outputs:
       has_changes:
         description: 'Whether there were changes to release'
@@ -48,11 +57,19 @@ jobs:
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
+      - name: Generate GitHub App token
+        id: app-token
+        if: ${{ inputs.app_id != '' }}
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ inputs.app_id }}
+          private-key: ${{ secrets.app_private_key }}
+
       - name: Checkout
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
 
       - name: Configure Git
         run: |
@@ -396,7 +413,7 @@ jobs:
       - name: Create GitHub Release
         if: steps.changelog.outputs.has_changes == 'true' && inputs.create-github-release
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
           CHANGELOG: ${{ steps.changelog.outputs.changelog }}
         run: |
           while IFS= read -r tag; do
