@@ -41,7 +41,13 @@ jobs:
               find . -type f ! -name '*.*' \
                 -not -path './.git/*' -not -path '*/.terraform/*' -not -path '*/node_modules/*' -print0 \
                 | while IFS= read -r -d '' f; do
-                    head -n1 "$f" | grep -qE '^#!.*sh' && printf '%s\0' "$f" || true
+                    # Only the first line may be a shebang; reading just that line
+                    # (rather than grepping the whole file) avoids matching a #!
+                    # that appears inside a heredoc or test fixture.
+                    IFS= read -r first_line < "$f" || first_line=""
+                    case "$first_line" in
+                      '#!'*sh*) printf '%s\0' "$f" ;;
+                    esac
                   done
             } | sort -zu | xargs -0 -r shellcheck --severity="$SEVERITY"
           fi
