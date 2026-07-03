@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       script_dirs:
-        description: 'Space-separated dirs/files to scan. When empty, finds *.sh recursively.'
+        description: 'Space-separated dirs/files to scan. When empty, auto-discovers *.sh files and extensionless files with a shell shebang.'
         required: false
         type: string
         default: ''
@@ -28,7 +28,26 @@ jobs:
           SEVERITY: ${{ inputs.severity }}
         run: |
           if [ -n "$SCRIPT_DIRS" ]; then
-            find "$SCRIPT_DIRS" -type f -print0 | xargs -0 shellcheck --severity="$SEVERITY"
+            # Explicit dirs/files (space-separated): scan every file under them.
+            # shellcheck disable=SC2086 # intentional word-splitting for multiple paths
+            find $SCRIPT_DIRS -type f -print0 | xargs -0 -r shellcheck --severity="$SEVERITY"
           else
-            find . -name "*.sh" -not -path "./.git/*" -print0 | xargs -0 shellcheck --severity="$SEVERITY"
+            # Auto-discover: *.sh files plus extensionless files with a shell shebang.
+            # Many repos ship executable scripts without a .sh extension (e.g. an
+            # entrypoint or providers/*/setup), which `find -name '*.sh'` misses.
+            {
+              find . -type f -name '*.sh' \
+                -not -path './.git/*' -not -path '*/.terraform/*' -not -path '*/node_modules/*' -print0
+              find . -type f ! -name '*.*' \
+                -not -path './.git/*' -not -path '*/.terraform/*' -not -path '*/node_modules/*' -print0 \
+                | while IFS= read -r -d '' f; do
+                    # Only the first line may be a shebang; reading just that line
+                    # (rather than grepping the whole file) avoids matching a #!
+                    # that appears inside a heredoc or test fixture.
+                    IFS= read -r first_line < "$f" || first_line=""
+                    case "$first_line" in
+                      '#!'*sh*) printf '%s\0' "$f" ;;
+                    esac
+                  done
+            } | sort -zu | xargs -0 -r shellcheck --severity="$SEVERITY"
           fi
