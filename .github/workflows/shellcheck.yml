@@ -40,6 +40,8 @@ jobs:
                 -not -path './.git/*' -not -path '*/.terraform/*' -not -path '*/node_modules/*' -print0
               find . -type f ! -name '*.*' \
                 -not -path './.git/*' -not -path '*/.terraform/*' -not -path '*/node_modules/*' -print0 \
-                | { xargs -0 -r grep -lZE '^#!.*sh' || true; }
+                | while IFS= read -r -d '' f; do
+                    head -n1 "$f" | grep -qE '^#!.*sh' && printf '%s\0' "$f" || true
+                  done
             } | sort -zu | xargs -0 -r shellcheck --severity="$SEVERITY"
           fi
