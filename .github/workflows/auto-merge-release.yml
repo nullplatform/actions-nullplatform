@@ -49,11 +49,47 @@ jobs:
           app-id: ${{ secrets.app-id }}
           private-key: ${{ secrets.app-private-key }}
 
-      - name: Wait for checks and merge release PR
+      - name: Wait for other checks to pass
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          # gh pr checks --watch would include this very job's own check run,
+          # which never turns green until this step finishes — a deadlock.
+          # So we poll and explicitly exclude any check whose link points at
+          # this run (identified via the /runs/<RUN_ID>/ segment in its URL).
+          done_waiting=false
+          for _ in $(seq 1 90); do
+            checks="$(gh pr checks "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json name,state,link)"
+            others="$(echo "$checks" | jq --arg run "/runs/$RUN_ID/" '[.[] | select(.link | contains($run) | not)]')"
+
+            failing="$(echo "$others" | jq 'map(select(.state=="FAILURE" or .state=="ERROR" or .state=="CANCELLED" or .state=="TIMED_OUT")) | length')"
+            if [ "$failing" -gt 0 ]; then
+              echo "::error::One or more checks failed on PR #$PR_NUMBER"
+              echo "$others"
+              exit 1
+            fi
+
+            pending="$(echo "$others" | jq 'map(select(.state=="PENDING" or .state=="QUEUED" or .state=="IN_PROGRESS")) | length')"
+            if [ "$pending" -eq 0 ]; then
+              echo "All other checks passed."
+              done_waiting=true
+              break
+            fi
+
+            echo "Waiting on $pending check(s)..."
+            sleep 15
+          done
+
+          if [ "$done_waiting" != true ]; then
+            echo "::error::Timed out waiting for checks on PR #$PR_NUMBER"
+            exit 1
+          fi
+
+      - name: Merge release PR
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           MERGE_METHOD: ${{ inputs.merge_method }}
-        run: |
-          gh pr checks "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --watch --fail-fast
-          gh pr merge "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --"$MERGE_METHOD"
+        run: gh pr merge "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --"$MERGE_METHOD"
