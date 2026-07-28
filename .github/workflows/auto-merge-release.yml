@@ -1,0 +1,59 @@
+name: auto-merge-release-pr
+
+on:
+  workflow_call:
+    inputs:
+      release_pr_label:
+        description: 'Label release-please sets on its release PR while pending'
+        required: false
+        type: string
+        default: 'autorelease: pending'
+      release_pr_author:
+        description: 'Expected author login of the release PR'
+        required: false
+        type: string
+        default: 'github-actions[bot]'
+      merge_method:
+        description: 'Merge method to use when merging the release PR (merge, squash, rebase)'
+        required: false
+        type: string
+        default: 'merge'
+    secrets:
+      app-id:
+        description: 'GitHub App ID used to mint a token that can trigger downstream workflows'
+        required: true
+      app-private-key:
+        description: 'GitHub App private key'
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  automerge:
+    name: Auto-merge release PR
+    if: |
+      github.event.pull_request.user.login == inputs.release_pr_author &&
+      contains(github.event.pull_request.labels.*.name, inputs.release_pr_label)
+    runs-on: ubuntu-24.04
+    steps:
+      # A merge done with the default GITHUB_TOKEN would not trigger the
+      # push-triggered release workflow on main (GitHub's Actions loop
+      # prevention), so the tag/GitHub Release would never get created.
+      # Minting a token from a GitHub App avoids that restriction.
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.app-id }}
+          private-key: ${{ secrets.app-private-key }}
+
+      - name: Wait for checks and merge release PR
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          MERGE_METHOD: ${{ inputs.merge_method }}
+        run: |
+          gh pr checks "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --watch --fail-fast
+          gh pr merge "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --"$MERGE_METHOD"
