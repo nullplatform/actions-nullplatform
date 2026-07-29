@@ -18,6 +18,16 @@ on:
         required: false
         type: string
         default: 'merge'
+      pr_number:
+        description: >-
+          Explicit PR number to merge. Set this when calling from a workflow_run
+          (or other non-pull_request) trigger, where github.event.pull_request
+          isn't available — the caller is then responsible for resolving the PR
+          and checking its author/label itself. Leave at 0 for pull_request-
+          triggered callers, which fall back to github.event.pull_request.
+        required: false
+        type: number
+        default: 0
     secrets:
       app-id:
         description: 'GitHub App ID used to mint a token that can trigger downstream workflows'
@@ -34,8 +44,9 @@ jobs:
   automerge:
     name: Auto-merge release PR
     if: |
-      github.event.pull_request.user.login == inputs.release_pr_author &&
-      contains(github.event.pull_request.labels.*.name, inputs.release_pr_label)
+      inputs.pr_number != 0 ||
+      (github.event.pull_request.user.login == inputs.release_pr_author &&
+       contains(github.event.pull_request.labels.*.name, inputs.release_pr_label))
     runs-on: ubuntu-24.04
     steps:
       # A merge done with the default GITHUB_TOKEN would not trigger the
@@ -52,7 +63,7 @@ jobs:
       - name: Wait for other checks to pass
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_NUMBER: ${{ inputs.pr_number != 0 && inputs.pr_number || github.event.pull_request.number }}
           RUN_ID: ${{ github.run_id }}
         run: |
           # gh pr checks --watch would include this very job's own check run,
@@ -90,6 +101,6 @@ jobs:
       - name: Merge release PR
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_NUMBER: ${{ inputs.pr_number != 0 && inputs.pr_number || github.event.pull_request.number }}
           MERGE_METHOD: ${{ inputs.merge_method }}
         run: gh pr merge "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --"$MERGE_METHOD"
