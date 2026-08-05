@@ -27,10 +27,15 @@ on:
         type: string
         default: 'public.ecr.aws/nullplatform'
       tag:
-        description: 'Additional tag for the image (latest and sha are always added)'
+        description: 'Tag for the image'
         required: false
         type: string
         default: ''
+      also_tag_latest:
+        description: 'Also tag and push the image as latest'
+        required: false
+        type: boolean
+        default: false
       aws_region:
         description: 'AWS region for ECR'
         required: false
@@ -99,6 +104,10 @@ jobs:
           # Extract version from tag (e.g., logs-controller-v2.0.0 -> v2.0.0)
           VERSION=$(echo "${TAG}" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' || echo "${TAG}")
           TAGS="${REGISTRY}/${IMAGE}:${VERSION}"
+
+          if [ "${{ inputs.also_tag_latest }}" = "true" ]; then
+            TAGS="${TAGS},${REGISTRY}/${IMAGE}:latest"
+          fi
 
           echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
           echo "Generated tags: ${TAGS}"
