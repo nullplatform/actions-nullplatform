@@ -29,6 +29,11 @@ jobs:
             exit 0
           fi
 
+          if [[ "$BRANCH" == dependabot/* ]]; then
+            echo "Skipping validation for dependabot branch: $BRANCH"
+            exit 0
+          fi
+
           if [[ ! "$BRANCH" =~ $PATTERN ]]; then
             echo "::error::Invalid branch name: $BRANCH"
             echo ""
