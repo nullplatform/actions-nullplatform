@@ -29,13 +29,28 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      # Hoisted so the `if` below can test it: the secrets context is not
+      # dependable in a step-level `if`, but env is.
+      CI_APP_ID: ${{ secrets.CI_APP_ID }}
     steps:
       - uses: actions/checkout@v6
+
+      # Short-lived, installation-scoped, and not tied to anyone's account,
+      # unlike the PAT fallbacks below. Used when the App is configured.
+      - name: Mint a token for private dependency access
+        id: deps-token
+        if: env.CI_APP_ID != ''
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.CI_APP_ID }}
+          private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          permission-contents: read
 
       - name: Build image (legacy --build-arg)
         if: ${{ !inputs.use_buildkit_secret }}
         env:
-          GITHUB_TOKEN: ${{ secrets.CI_TOKEN || secrets.DEPENDABOT_TOKEN || secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ steps.deps-token.outputs.token || secrets.CI_TOKEN || secrets.DEPENDABOT_TOKEN || secrets.GITHUB_TOKEN }}
           DOCKERFILE: ${{ inputs.dockerfile }}
           CONTEXT: ${{ inputs.context }}
         run: docker build --build-arg GITHUB_TOKEN="$GITHUB_TOKEN" -f "$DOCKERFILE" -t pr-check "$CONTEXT"
@@ -43,7 +58,7 @@ jobs:
       - name: Build image (BuildKit secret)
         if: ${{ inputs.use_buildkit_secret }}
         env:
-          GITHUB_TOKEN: ${{ secrets.CI_TOKEN || secrets.DEPENDABOT_TOKEN || secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ steps.deps-token.outputs.token || secrets.CI_TOKEN || secrets.DEPENDABOT_TOKEN || secrets.GITHUB_TOKEN }}
           DOCKERFILE: ${{ inputs.dockerfile }}
           CONTEXT: ${{ inputs.context }}
         run: |

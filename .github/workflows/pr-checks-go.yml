@@ -28,6 +28,9 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      # Hoisted so the `if` below can test it: the secrets context is not
+      # dependable in a step-level `if`, but env is.
+      CI_APP_ID: ${{ secrets.CI_APP_ID }}
     steps:
       - uses: actions/checkout@v6
 
@@ -44,14 +47,27 @@ jobs:
           go-version: ${{ inputs.go-version }}
 
       # A workflow's GITHUB_TOKEN is scoped to its OWN repository, so `go get` of
-      # a private module in the same org still 404s. Point git at a token that
-      # can read it, and set GOPRIVATE so the module bypasses proxy.golang.org
-      # (which cannot serve private modules) and the checksum database.
-      # No-ops when no cross-repo token is configured, so public-only repos are
-      # unaffected.
+      # a private module in the same org still 404s (github/community#46566).
+      # Mint a short-lived App installation token instead: it expires in about an
+      # hour, is limited to the repos the App is installed on, and is not tied to
+      # any person's account — a PAT stops working the day its owner offboards.
+      - name: Mint a token for private module access
+        id: modules-token
+        if: env.CI_APP_ID != ''
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.CI_APP_ID }}
+          private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          permission-contents: read
+
+      # Point git at whichever credential is available and set GOPRIVATE, which
+      # keeps the module off proxy.golang.org (it cannot serve private modules)
+      # and the checksum database. No-ops when nothing is configured, so
+      # public-only Go repos are unaffected.
       - name: Configure access to private Go modules
         env:
-          MODULES_TOKEN: ${{ secrets.CI_TOKEN || secrets.DEPENDABOT_TOKEN }}
+          MODULES_TOKEN: ${{ steps.modules-token.outputs.token || secrets.CI_TOKEN || secrets.DEPENDABOT_TOKEN }}
           GO_PRIVATE: ${{ inputs.go-private }}
         run: |
           if [ -z "$MODULES_TOKEN" ]; then
