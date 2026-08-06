@@ -18,6 +18,14 @@ on:
         required: false
         type: string
         default: 'github.com/nullplatform/*'
+      require-private-modules:
+        description: >-
+          Set true when the repo genuinely depends on a private module. The job
+          then fails fast with a clear message if no credential is available,
+          instead of proceeding to a confusing `go get` 404 later.
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -69,9 +77,17 @@ jobs:
         env:
           MODULES_TOKEN: ${{ steps.modules-token.outputs.token || secrets.CI_TOKEN || secrets.DEPENDABOT_TOKEN }}
           GO_PRIVATE: ${{ inputs.go-private }}
+          REQUIRED: ${{ inputs.require-private-modules }}
         run: |
           if [ -z "$MODULES_TOKEN" ]; then
-            echo "No CI_TOKEN/DEPENDABOT_TOKEN configured; skipping private module setup."
+            if [ "$REQUIRED" = "true" ]; then
+              echo "::error::This repository depends on a private Go module, but no" \
+                   "credential is available. Configure the CI_APP_ID/CI_APP_PRIVATE_KEY" \
+                   "org secrets (GitHub App with Contents: read on the module repos)," \
+                   "or CI_TOKEN/DEPENDABOT_TOKEN as a fallback."
+              exit 1
+            fi
+            echo "No private-module credential configured; skipping (repo does not require one)."
             exit 0
           fi
           echo "GOPRIVATE=$GO_PRIVATE" >>"$GITHUB_ENV"
