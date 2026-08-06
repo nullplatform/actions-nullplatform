@@ -18,6 +18,15 @@ on:
         required: false
         type: string
         default: 'github.com/nullplatform/*'
+      use-app-token:
+        description: >-
+          Mint a GitHub App installation token for private dependency access.
+          Opt in per repository: CI_APP_ID is an ORG secret, so gating on its
+          existence would switch every consumer over at once with no way to
+          verify one repo first.
+        required: false
+        type: boolean
+        default: false
       require-private-modules:
         description: >-
           Set true when the repo genuinely depends on a private module. The job
@@ -36,9 +45,6 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-      # Hoisted so the `if` below can test it: the secrets context is not
-      # dependable in a step-level `if`, but env is.
-      CI_APP_ID: ${{ secrets.CI_APP_ID }}
     steps:
       - uses: actions/checkout@v6
 
@@ -61,7 +67,7 @@ jobs:
       # any person's account — a PAT stops working the day its owner offboards.
       - name: Mint a token for private module access
         id: modules-token
-        if: env.CI_APP_ID != ''
+        if: inputs.use-app-token
         uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ secrets.CI_APP_ID }}
@@ -90,7 +96,8 @@ jobs:
             echo "No private-module credential configured; skipping (repo does not require one)."
             exit 0
           fi
-          echo "GOPRIVATE=$GO_PRIVATE" >>"$GITHUB_ENV"
+          printf 'GOPRIVATE<<__NP_GOPRIVATE__\n%s\n__NP_GOPRIVATE__\n' \
+            "$GO_PRIVATE" >>"$GITHUB_ENV"
           git config --global \
             url."https://x-access-token:${MODULES_TOKEN}@github.com/".insteadOf \
             "https://github.com/"

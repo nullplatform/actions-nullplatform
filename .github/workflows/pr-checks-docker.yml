@@ -13,6 +13,22 @@ on:
         required: false
         type: string
         default: 'Dockerfile'
+      use-app-token:
+        description: >-
+          Mint a GitHub App installation token and use it for the build,
+          ahead of CI_TOKEN/DEPENDABOT_TOKEN. Opt in per repository: CI_APP_ID
+          is an ORG secret, so gating on its existence would switch every
+          consumer at once.
+
+          NOTE: this token is scoped to `contents: read`. The default chain
+          ends at secrets.GITHUB_TOKEN, which also carries `packages: read`
+          for builds that install from GitHub Packages. Only opt in when the
+          build needs SOURCE access; a build that needs packages must have
+          that permission granted on the App first, since a token cannot
+          request more than its installation holds.
+        required: false
+        type: boolean
+        default: false
       use_buildkit_secret:
         description: 'Use BuildKit --secret for GITHUB_TOKEN instead of --build-arg (requires updated Dockerfile)'
         required: false
@@ -29,17 +45,16 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-      # Hoisted so the `if` below can test it: the secrets context is not
-      # dependable in a step-level `if`, but env is.
-      CI_APP_ID: ${{ secrets.CI_APP_ID }}
     steps:
       - uses: actions/checkout@v6
 
       # Short-lived, installation-scoped, and not tied to anyone's account,
-      # unlike the PAT fallbacks below. Used when the App is configured.
+      # unlike the PAT fallbacks below. Opt-in only: when use-app-token is
+      # false this step is skipped, its output is empty, and the chain below
+      # resolves exactly as it did before this input existed.
       - name: Mint a token for private dependency access
         id: deps-token
-        if: env.CI_APP_ID != ''
+        if: inputs.use-app-token
         uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ secrets.CI_APP_ID }}
