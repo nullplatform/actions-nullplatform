@@ -13,6 +13,28 @@ on:
         required: false
         type: string
         default: ''
+      go-private:
+        description: 'GOPRIVATE glob for modules that must bypass the public proxy'
+        required: false
+        type: string
+        default: 'github.com/nullplatform/*'
+      use-app-token:
+        description: >-
+          Mint a GitHub App installation token for private dependency access.
+          Opt in per repository: CI_APP_ID is an ORG secret, so gating on its
+          existence would switch every consumer over at once with no way to
+          verify one repo first.
+        required: false
+        type: boolean
+        default: false
+      require-private-modules:
+        description: >-
+          Set true when the repo genuinely depends on a private module. The job
+          then fails fast with a clear message if no credential is available,
+          instead of proceeding to a confusing `go get` 404 later.
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -37,6 +59,48 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version: ${{ inputs.go-version }}
+
+      # A workflow's GITHUB_TOKEN is scoped to its OWN repository, so `go get` of
+      # a private module in the same org still 404s (github/community#46566).
+      # Mint a short-lived App installation token instead: it expires in about an
+      # hour, is limited to the repos the App is installed on, and is not tied to
+      # any person's account — a PAT stops working the day its owner offboards.
+      - name: Mint a token for private module access
+        id: modules-token
+        if: inputs.use-app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.CI_APP_ID }}
+          private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          permission-contents: read
+
+      # Point git at whichever credential is available and set GOPRIVATE, which
+      # keeps the module off proxy.golang.org (it cannot serve private modules)
+      # and the checksum database. No-ops when nothing is configured, so
+      # public-only Go repos are unaffected.
+      - name: Configure access to private Go modules
+        env:
+          MODULES_TOKEN: ${{ steps.modules-token.outputs.token || secrets.CI_TOKEN || secrets.DEPENDABOT_TOKEN }}
+          GO_PRIVATE: ${{ inputs.go-private }}
+          REQUIRED: ${{ inputs.require-private-modules }}
+        run: |
+          if [ -z "$MODULES_TOKEN" ]; then
+            if [ "$REQUIRED" = "true" ]; then
+              echo "::error::This repository depends on a private Go module, but no" \
+                   "credential is available. Configure the CI_APP_ID/CI_APP_PRIVATE_KEY" \
+                   "org secrets (GitHub App with Contents: read on the module repos)," \
+                   "or CI_TOKEN/DEPENDABOT_TOKEN as a fallback."
+              exit 1
+            fi
+            echo "No private-module credential configured; skipping (repo does not require one)."
+            exit 0
+          fi
+          printf 'GOPRIVATE<<__NP_GOPRIVATE__\n%s\n__NP_GOPRIVATE__\n' \
+            "$GO_PRIVATE" >>"$GITHUB_ENV"
+          git config --global \
+            url."https://x-access-token:${MODULES_TOKEN}@github.com/".insteadOf \
+            "https://github.com/"
 
       - name: Lint
         working-directory: ${{ inputs.working-directory }}
