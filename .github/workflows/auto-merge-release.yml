@@ -71,27 +71,46 @@ jobs:
           # So we poll and explicitly exclude any check whose link points at
           # this run (identified via the /runs/<RUN_ID>/ segment in its URL).
           #
-          # gh pr checks errors (instead of returning an empty list) when a
-          # PR has zero checks registered at all. Right after this PR was
-          # opened, that's almost always transient — checks from other
-          # pull_request-triggered workflows on the caller repo can take a
-          # few seconds to register, not a sign the PR will never have any.
-          # Give that a short grace period (10 tries) before concluding
-          # there really are none and proceeding anyway.
+          # gh pr checks --json exits non-zero instead of returning an empty
+          # list when a PR has zero checks registered — but ALSO for a
+          # variety of unrelated failures (expired/bad token, rate limits,
+          # transient 5xx, PR/commit not found). --json suppresses gh's own
+          # pending/failing exit codes, so a non-zero exit here never means
+          # "checks are red" — but it CAN mean "we can't tell", and treating
+          # that the same as "this PR genuinely has no checks" would merge
+          # an unverified PR. So only the specific "no checks reported"
+          # message counts toward the grace period below; any other error
+          # is retried like a pending check (eventually hits the 90-try
+          # timeout and fails closed). And once real checks have been seen
+          # even once, this step never falls back to "nothing to wait for"
+          # again — a later failure at that point is a hard error.
           no_checks_grace=0
+          checks_seen=false
           done_waiting=false
-          for _ in $(seq 1 90); do
-            if ! checks="$(gh pr checks "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json name,state,link 2>&1)"; then
+          err_file="${RUNNER_TEMP:-/tmp}/gh_pr_checks_err"
+          for i in $(seq 1 90); do
+            if ! checks="$(gh pr checks "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json name,state,link 2>"$err_file")"; then
+              err="$(cat "$err_file")"
+              if [ "$checks_seen" = true ]; then
+                echo "::error::PR #$PR_NUMBER had checks registered, but gh pr checks now fails: $err"
+                exit 1
+              fi
+              if ! printf '%s' "$err" | grep -qi 'no checks reported'; then
+                echo "::warning::gh pr checks failed on PR #$PR_NUMBER (attempt $i/90), retrying: $err"
+                sleep 15
+                continue
+              fi
               no_checks_grace=$((no_checks_grace + 1))
               if [ "$no_checks_grace" -ge 10 ]; then
-                echo "No checks ever registered on PR #$PR_NUMBER after $no_checks_grace attempts — treating as nothing to wait for."
+                echo "::warning::No checks registered on PR #$PR_NUMBER after $no_checks_grace attempts — merging without check verification."
                 done_waiting=true
                 break
               fi
-              echo "No checks registered yet on PR #$PR_NUMBER (attempt $no_checks_grace/10), waiting..."
+              echo "No checks registered yet on PR #$PR_NUMBER (grace attempt $no_checks_grace/10, overall $i/90), waiting..."
               sleep 15
               continue
             fi
+            checks_seen=true
             no_checks_grace=0
 
             others="$(echo "$checks" | jq --arg run "/runs/$RUN_ID/" '[.[] | select(.link | contains($run) | not)]')"
