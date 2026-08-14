@@ -70,9 +70,30 @@ jobs:
           # which never turns green until this step finishes — a deadlock.
           # So we poll and explicitly exclude any check whose link points at
           # this run (identified via the /runs/<RUN_ID>/ segment in its URL).
+          #
+          # gh pr checks errors (instead of returning an empty list) when a
+          # PR has zero checks registered at all. Right after this PR was
+          # opened, that's almost always transient — checks from other
+          # pull_request-triggered workflows on the caller repo can take a
+          # few seconds to register, not a sign the PR will never have any.
+          # Give that a short grace period (10 tries) before concluding
+          # there really are none and proceeding anyway.
+          no_checks_grace=0
           done_waiting=false
           for _ in $(seq 1 90); do
-            checks="$(gh pr checks "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json name,state,link)"
+            if ! checks="$(gh pr checks "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json name,state,link 2>&1)"; then
+              no_checks_grace=$((no_checks_grace + 1))
+              if [ "$no_checks_grace" -ge 10 ]; then
+                echo "No checks ever registered on PR #$PR_NUMBER after $no_checks_grace attempts — treating as nothing to wait for."
+                done_waiting=true
+                break
+              fi
+              echo "No checks registered yet on PR #$PR_NUMBER (attempt $no_checks_grace/10), waiting..."
+              sleep 15
+              continue
+            fi
+            no_checks_grace=0
+
             others="$(echo "$checks" | jq --arg run "/runs/$RUN_ID/" '[.[] | select(.link | contains($run) | not)]')"
 
             failing="$(echo "$others" | jq 'map(select(.state=="FAILURE" or .state=="ERROR" or .state=="CANCELLED" or .state=="TIMED_OUT")) | length')"
