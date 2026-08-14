@@ -79,34 +79,38 @@ jobs:
           # "checks are red" — but it CAN mean "we can't tell", and treating
           # that the same as "this PR genuinely has no checks" would merge
           # an unverified PR. So only the specific "no checks reported"
-          # message counts toward the grace period below; any other error
-          # is retried like a pending check (eventually hits the 90-try
-          # timeout and fails closed). And once real checks have been seen
-          # even once, this step never falls back to "nothing to wait for"
-          # again — a later failure at that point is a hard error.
+          # message — and only before any real check has ever been seen on
+          # this run — counts toward the short grace period below. Any
+          # other failure (including "no checks reported" showing up AGAIN
+          # after checks were already seen once, e.g. because release-please
+          # force-pushed a new commit onto its own PR and the new head's
+          # checks haven't registered yet) is just retried like a pending
+          # check, relying on the outer 90-try timeout to fail closed if it
+          # never recovers — deliberately not a separate hard error, so a
+          # lone transient blip or a routine head change doesn't kill the
+          # whole run.
           no_checks_grace=0
           checks_seen=false
           done_waiting=false
           err_file="${RUNNER_TEMP:-/tmp}/gh_pr_checks_err"
           for i in $(seq 1 90); do
             if ! checks="$(gh pr checks "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json name,state,link 2>"$err_file")"; then
-              err="$(cat "$err_file")"
-              if [ "$checks_seen" = true ]; then
-                echo "::error::PR #$PR_NUMBER had checks registered, but gh pr checks now fails: $err"
-                exit 1
+              err="$(cat "$err_file" 2>/dev/null || true)"
+              if printf '%s' "$err" | grep -qi 'no checks reported'; then
+                if [ "$checks_seen" = false ]; then
+                  no_checks_grace=$((no_checks_grace + 1))
+                  if [ "$no_checks_grace" -ge 10 ]; then
+                    echo "::warning::No checks registered on PR #$PR_NUMBER after $no_checks_grace attempts — merging without check verification."
+                    done_waiting=true
+                    break
+                  fi
+                  echo "No checks registered yet on PR #$PR_NUMBER (grace attempt $no_checks_grace/10, overall $i/90), waiting..."
+                else
+                  echo "PR #$PR_NUMBER currently reports no checks (overall $i/90) — its head may have just changed, waiting for its checks..."
+                fi
+              else
+                echo "::warning::gh pr checks failed on PR #$PR_NUMBER (overall $i/90), retrying: $err"
               fi
-              if ! printf '%s' "$err" | grep -qi 'no checks reported'; then
-                echo "::warning::gh pr checks failed on PR #$PR_NUMBER (attempt $i/90), retrying: $err"
-                sleep 15
-                continue
-              fi
-              no_checks_grace=$((no_checks_grace + 1))
-              if [ "$no_checks_grace" -ge 10 ]; then
-                echo "::warning::No checks registered on PR #$PR_NUMBER after $no_checks_grace attempts — merging without check verification."
-                done_waiting=true
-                break
-              fi
-              echo "No checks registered yet on PR #$PR_NUMBER (grace attempt $no_checks_grace/10, overall $i/90), waiting..."
               sleep 15
               continue
             fi
