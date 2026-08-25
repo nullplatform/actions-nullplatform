@@ -50,6 +50,9 @@ on:
       image_digest:
         description: 'OCI image-index digest (sha256:...)'
         value: ${{ jobs.build-and-push.outputs.digest }}
+      image_tag:
+        description: 'Tag the image was actually pushed with (after prefix stripping)'
+        value: ${{ jobs.build-and-push.outputs.version }}
     secrets:
       aws_role_arn:
         description: 'AWS IAM Role ARN for OIDC authentication'
@@ -65,6 +68,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       digest: ${{ steps.digest.outputs.digest }}
+      version: ${{ steps.tags.outputs.version }}
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
@@ -101,8 +105,16 @@ jobs:
             exit 1
           fi
 
-          # Extract version from tag (e.g., logs-controller-v2.0.0 -> v2.0.0)
-          VERSION=$(echo "${TAG}" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' || echo "${TAG}")
+          # Strip an optional monorepo prefix from the tag (logs-controller-v2.0.0
+          # -> v2.0.0) while keeping the SemVer intact, prerelease and build
+          # metadata included: v1.2.3-beta must NOT collapse to v1.2.3, or a
+          # prerelease would squat the release tag. The match is anchored, so
+          # tags that aren't semver-shaped (beta, latest) pass through untouched.
+          if [[ "${TAG}" =~ ^(.*-)?(v?[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?)$ ]]; then
+            VERSION="${BASH_REMATCH[2]}"
+          else
+            VERSION="${TAG}"
+          fi
           TAGS="${REGISTRY}/${IMAGE}:${VERSION}"
 
           if [ "${{ inputs.also_tag_latest }}" = "true" ]; then
@@ -110,6 +122,7 @@ jobs:
           fi
 
           echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "Generated tags: ${TAGS}"
 
       - name: Build and push Docker image
