@@ -13,6 +13,17 @@ on:
         required: false
         type: boolean
         default: true
+    # Exposed so callers can chain publish/register jobs in the SAME workflow
+    # run. Chaining here is the standard: release-please creates tags with
+    # GITHUB_TOKEN, and GitHub never triggers workflows from bot-token events,
+    # so a separate `on: push: tags` publish workflow silently does not fire.
+    outputs:
+      release_created:
+        description: 'true when release-please cut a release on this run'
+        value: ${{ jobs.release.outputs.release_created }}
+      tag_name:
+        description: 'Tag of the created release (e.g. v1.2.3)'
+        value: ${{ jobs.release.outputs.tag_name }}
 
 permissions:
   contents: write
