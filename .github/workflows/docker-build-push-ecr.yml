@@ -46,6 +46,11 @@ on:
         required: false
         type: string
         default: ''
+      ref:
+        description: 'Git ref to check out and build (tag/branch/SHA). Empty = the commit that triggered the run. Pass the tag being published whenever the run context is not the tag itself (e.g. chained release pipelines running on main).'
+        required: false
+        type: string
+        default: ''
     outputs:
       image_digest:
         description: 'OCI image-index digest (sha256:...)'
@@ -75,6 +80,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+        with:
+          # Empty ref = actions/checkout default (the triggering commit).
+          ref: ${{ inputs.ref }}
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4
