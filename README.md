@@ -48,6 +48,7 @@ This repository provides reusable GitHub Actions workflows for CI/CD, security s
 | [tofu-test](#tofu-test) | 🚀 Build & Deploy | Runs OpenTofu test suites for infrastructure modules |
 | [Changelog and Release](#changelog-and-release) | 📦 Release & Changelog | Automated version bumping and changelog generation |
 | [tofu-release](#tofu-release) | 📦 Release & Changelog | Creates releases for Terraform modules with version updates |
+| [release-publish-oci](#release-publish-oci) | 📦 Release & Changelog | Chained release: release-please, ECR image publish, artifact registration, release metadata |
 | [tofu-pre-release](#tofu-pre-release) | 📦 Release & Changelog | Previews changelog in pull requests before release |
 | [readme-ai-generator-v2](#readme-ai-generator-v2) | 📚 Documentation | AI-powered README generation for projects |
 | [tofu-docs](#tofu-docs) | 📚 Documentation | Generates Terraform module documentation |
@@ -388,6 +389,65 @@ Validates that Node.js projects build successfully using pnpm. Only runs the bui
 - None (uses `GITHUB_TOKEN
 
 <!-- ACTIONS-END -->
+
+## 📦 Release & Changelog
+
+### release-publish-oci
+
+The standard release pipeline for service repos that ship an OCI image. Chains release-please, the ECR image publish, nullplatform artifact registration, and release finalization (artifact metadata appended to the body, release force-published) in a single workflow run — so the GitHub limitation that bot-token events never trigger workflows is structurally irrelevant, and no PAT is needed. Supports `existing_tag` for recovery/backfill of already-created tags.
+
+**Inputs**
+
+| Name | Description | Required | Default |
+|------|-------------|----------|---------|
+| image_name | Image name under the registry (e.g. scopes/lambda) | Yes | - |
+| context | Docker build context | No | . |
+| dockerfile | Dockerfile path relative to context | No | Dockerfile |
+| platforms | Target platforms for the multi-arch build | No | linux/amd64,linux/arm64 |
+| ecr_registry | ECR registry URL prefix | No | public.ecr.aws/nullplatform |
+| aws_region | AWS region for ECR | No | us-east-1 |
+| build_args | Docker build arguments (newline-separated) | No | '' |
+| also_tag_latest | Also tag and push the image as latest | No | false |
+| release-type | Release Please release type | No | simple |
+| update_readme_versions | Update ref=vX.Y.Z references in READMEs after release | No | false |
+| existing_tag | Skip release-please; publish + finalize this existing tag | No | '' |
+| register_artifact | Register the image as a nullplatform oci_image artifact | No | true |
+| artifact_visible_to | Visibility selector for the registered artifact | No | organization=* |
+| np_cli_version | np CLI version/channel for artifact registration | No | alpha-packages |
+
+**Secrets**
+- `aws_role_arn` (required): AWS IAM Role ARN for OIDC auth against ECR
+- `artifact_np_api_key`: nullplatform API key (required while `register_artifact` is true)
+
+Also reads the `NP_ARTIFACT_NRN` repository/organization variable (artifact owner NRN), and requires the caller to grant `contents: write`, `pull-requests: write`, and `id-token: write` (a preflight job fails fast when `id-token` is missing).
+
+**Usage**
+
+```yaml
+name: release
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      existing_tag:
+        description: 'Publish + finalize an existing tag (recovery/backfill)'
+        required: true
+        type: string
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+jobs:
+  release:
+    uses: nullplatform/actions-nullplatform/.github/workflows/release-publish-oci.yml@main
+    with:
+      image_name: scopes/lambda
+      existing_tag: ${{ inputs.existing_tag || '' }}
+    secrets:
+      aws_role_arn: ${{ secrets.AWS_ROLE_ARN_ECR_PUSH }}
+      artifact_np_api_key: ${{ secrets.ARTIFACT_NP_API_KEY }}
+```
 
 ## Notes
 
