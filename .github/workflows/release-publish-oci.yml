@@ -3,9 +3,9 @@ name: release-publish-oci
 # The standard release pipeline for service repos that ship an OCI image
 # (scopes-lambda and the family of service repos modeled on it):
 #
-#   release-please ──▶ docker build+push ECR ──▶ np artifact register
-#                                                        │
-#                                              release finalize (metadata + publish)
+#   preflight ──▶ release-please ──▶ docker build+push ECR ──▶ finalize
+#                                                              (artifact register +
+#                                                               release metadata + publish)
 #
 # Everything runs in ONE workflow run, chained on `release_created`. This is
 # deliberate: release-please creates tags/releases with GITHUB_TOKEN, and
@@ -15,6 +15,11 @@ name: release-publish-oci
 # (Historical footnote: the manual workaround — delete + re-push the tag —
 # does trigger the tag workflow, but deleting a tag flips its GitHub release
 # to Draft, which is how orphaned draft releases appear.)
+#
+# Recovery / backfill: pass `existing_tag` to skip release-please and run
+# publish + finalize for a tag that already exists — completes a release whose
+# publish failed, or backfills a pre-pipeline tag. Callers typically expose it
+# via a small workflow_dispatch wrapper (see below).
 #
 # The finalize job appends the artifact block (image, digest, artifact id) to
 # the release body so consumers can review and copy the exact pinned image,
@@ -26,6 +31,12 @@ name: release-publish-oci
 #   on:
 #     push:
 #       branches: [main]
+#     workflow_dispatch:
+#       inputs:
+#         existing_tag:
+#           description: 'Publish + finalize an existing tag (recovery/backfill)'
+#           required: true
+#           type: string
 #   permissions:
 #     contents: write
 #     pull-requests: write
@@ -35,12 +46,20 @@ name: release-publish-oci
 #       uses: nullplatform/actions-nullplatform/.github/workflows/release-publish-oci.yml@main
 #       with:
 #         image_name: scopes/lambda
+#         existing_tag: ${{ inputs.existing_tag || '' }}
 #       secrets:
 #         aws_role_arn: ${{ secrets.AWS_ROLE_ARN_ECR_PUSH }}
 #         artifact_np_api_key: ${{ secrets.ARTIFACT_NP_API_KEY }}
 #
 # Artifact registration additionally reads the NP_ARTIFACT_NRN repository (or
 # organization) variable — the owner NRN for the registered artifact.
+#
+# Nested `uses: ./.github/workflows/...` below resolves against THIS repo at
+# the ref the caller pinned: per GitHub's reusable-workflows docs, the path
+# form runs the called workflow "from the same commit as the calling
+# workflow" — and for these nested calls the calling workflow is this file.
+# The explicit {owner}/{repo}@{ref} form would instead float the inner calls
+# to whatever ref is named there, breaking version pinning of this workflow.
 
 on:
   workflow_call:
@@ -69,8 +88,23 @@ on:
         required: false
         type: string
         default: 'public.ecr.aws/nullplatform'
+      aws_region:
+        description: 'AWS region for ECR'
+        required: false
+        type: string
+        default: 'us-east-1'
+      build_args:
+        description: 'Docker build arguments (newline-separated)'
+        required: false
+        type: string
+        default: ''
+      also_tag_latest:
+        description: 'Also tag and push the image as latest'
+        required: false
+        type: boolean
+        default: false
       release-type:
-        description: 'Release Please release type'
+        description: 'Release Please release type (kebab-case inherited from release.yml)'
         required: false
         type: string
         default: 'simple'
@@ -79,25 +113,40 @@ on:
         required: false
         type: boolean
         default: false
+      existing_tag:
+        description: 'Skip release-please and publish + finalize this existing tag (recovery/backfill)'
+        required: false
+        type: string
+        default: ''
+      register_artifact:
+        description: 'Register the image as a nullplatform oci_image artifact (requires artifact_np_api_key + NP_ARTIFACT_NRN)'
+        required: false
+        type: boolean
+        default: true
       artifact_visible_to:
         description: 'Visibility selector for the registered artifact'
         required: false
         type: string
         default: 'organization=*'
+      np_cli_version:
+        description: 'np CLI version/channel for artifact registration (alpha-packages until artifact create reaches stable)'
+        required: false
+        type: string
+        default: 'alpha-packages'
     secrets:
       aws_role_arn:
         description: 'AWS IAM Role ARN for OIDC auth against ECR'
         required: true
       artifact_np_api_key:
-        description: 'nullplatform API key for artifact registration (skip registration when absent)'
+        description: 'nullplatform API key for artifact registration (required while register_artifact is true)'
         required: false
     outputs:
       release_created:
         description: 'true when a release was cut on this run'
         value: ${{ jobs.release.outputs.release_created }}
       tag_name:
-        description: 'Tag of the created release'
-        value: ${{ jobs.release.outputs.tag_name }}
+        description: 'Tag of the created release (or existing_tag in recovery mode)'
+        value: ${{ inputs.existing_tag || jobs.release.outputs.tag_name }}
       image_digest:
         description: 'OCI image-index digest of the published image'
         value: ${{ jobs.publish.outputs.image_digest }}
@@ -108,15 +157,34 @@ permissions:
   id-token: write
 
 jobs:
+  # Fails BEFORE release-please cuts anything when the caller forgot
+  # `id-token: write`: a called workflow can only narrow the caller's token,
+  # so without it the ECR OIDC login dies after the release already exists.
+  # The runner only exposes the token-exchange endpoint when the permission
+  # is granted, which makes it cheaply detectable.
+  preflight:
+    name: Preflight
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Verify caller grants id-token permission
+        run: |
+          if [ -z "$ACTIONS_ID_TOKEN_REQUEST_URL" ]; then
+            echo "::error::the calling workflow must grant 'id-token: write' (required for the ECR push). Add it to the caller's permissions block."
+            exit 1
+          fi
+          echo "id-token permission present"
+
   release:
+    needs: preflight
+    if: ${{ inputs.existing_tag == '' }}
     uses: ./.github/workflows/release.yml
     with:
       release-type: ${{ inputs.release-type }}
       update_readme_versions: ${{ inputs.update_readme_versions }}
 
   publish:
-    needs: release
-    if: ${{ needs.release.outputs.release_created == 'true' }}
+    needs: [preflight, release]
+    if: ${{ !cancelled() && needs.preflight.result == 'success' && (needs.release.outputs.release_created == 'true' || inputs.existing_tag != '') }}
     uses: ./.github/workflows/docker-build-push-ecr.yml
     with:
       image_name: ${{ inputs.image_name }}
@@ -124,34 +192,49 @@ jobs:
       dockerfile: ${{ inputs.dockerfile }}
       platforms: ${{ inputs.platforms }}
       ecr_registry: ${{ inputs.ecr_registry }}
-      tag: ${{ needs.release.outputs.tag_name }}
+      aws_region: ${{ inputs.aws_region }}
+      build_args: ${{ inputs.build_args }}
+      also_tag_latest: ${{ inputs.also_tag_latest }}
+      tag: ${{ inputs.existing_tag || needs.release.outputs.tag_name }}
     secrets:
       aws_role_arn: ${{ secrets.aws_role_arn }}
 
   finalize-release:
     name: Register artifact & finalize release
     needs: [release, publish]
-    if: ${{ needs.release.outputs.release_created == 'true' }}
+    if: ${{ !cancelled() && needs.publish.result == 'success' }}
     runs-on: ubuntu-24.04
     env:
       GH_TOKEN: ${{ github.token }}
-      TAG: ${{ needs.release.outputs.tag_name }}
+      TAG: ${{ inputs.existing_tag || needs.release.outputs.tag_name }}
+      # The tag docker-build-push-ecr ACTUALLY pushed (it strips monorepo
+      # prefixes) — the Image row must reference this, not the git tag.
+      IMAGE_TAG: ${{ needs.publish.outputs.image_tag }}
       DIGEST: ${{ needs.publish.outputs.image_digest }}
       ECR_REGISTRY: ${{ inputs.ecr_registry }}
       IMAGE_NAME: ${{ inputs.image_name }}
-      VISIBLE_TO: ${{ inputs.artifact_visible_to }}
-      NULLPLATFORM_API_KEY: ${{ secrets.artifact_np_api_key }}
-      NP_ARTIFACT_NRN: ${{ vars.NP_ARTIFACT_NRN }}
     steps:
       - name: Register oci_image artifact
         id: artifact
+        if: ${{ inputs.register_artifact }}
+        env:
+          NULLPLATFORM_API_KEY: ${{ secrets.artifact_np_api_key }}
+          NP_ARTIFACT_NRN: ${{ vars.NP_ARTIFACT_NRN }}
+          VISIBLE_TO: ${{ inputs.artifact_visible_to }}
+          NP_CLI_VERSION: ${{ inputs.np_cli_version }}
         run: |
-          if [ -z "$NULLPLATFORM_API_KEY" ] || [ -z "$NP_ARTIFACT_NRN" ]; then
-            echo "artifact_np_api_key secret or NP_ARTIFACT_NRN variable not set; skipping artifact registration"
-            echo "artifact_id=" >> "$GITHUB_OUTPUT"
-            exit 0
+          set -o pipefail
+          # register_artifact is a declared choice: missing wiring is an error,
+          # not a silent skip (a typo'd secret name must not produce a green run).
+          if [ -z "$NULLPLATFORM_API_KEY" ]; then
+            echo "::error::register_artifact is true but the artifact_np_api_key secret is empty or not passed"
+            exit 1
           fi
-          curl -s https://cli.nullplatform.com/install.sh | VERSION=alpha-packages sh
+          if [ -z "$NP_ARTIFACT_NRN" ]; then
+            echo "::error::register_artifact is true but the NP_ARTIFACT_NRN variable is not set"
+            exit 1
+          fi
+          curl -fsSL https://cli.nullplatform.com/install.sh | VERSION="$NP_CLI_VERSION" sh
 
           # np artifact create expects host-only --registry; the repository is
           # the registry path plus the image name.
@@ -163,6 +246,8 @@ jobs:
             REPOSITORY="$REG_PATH/$IMAGE_NAME"
           fi
 
+          # stdout only into the capture: stderr stays on the run log, so CLI
+          # warnings can never corrupt the JSON parse.
           OUTPUT=$(np artifact create \
             --nrn "$NP_ARTIFACT_NRN" \
             --type oci_image \
@@ -170,35 +255,59 @@ jobs:
             --repository "$REPOSITORY" \
             --digest "$DIGEST" \
             --visible-to "$VISIBLE_TO" \
-            --format json 2>&1) || { echo "$OUTPUT"; exit 1; }
+            --format json)
           echo "$OUTPUT"
-          ARTIFACT_ID=$(echo "$OUTPUT" | jq -r '.id // empty' 2>/dev/null || true)
+          ARTIFACT_ID=$(echo "$OUTPUT" | jq -r '.id // empty' || true)
+          if [ -z "$ARTIFACT_ID" ]; then
+            # Created (the command succeeded) but the id was not in the output:
+            # keep the run green and say so, never claim "not registered".
+            echo "::warning::artifact created but no id found in CLI output; release will say 'registered (id unavailable)'"
+            ARTIFACT_ID="registered (id unavailable)"
+          fi
           echo "artifact_id=$ARTIFACT_ID" >> "$GITHUB_OUTPUT"
 
       - name: Append artifact metadata & publish release
+        # Runs even when registration failed: the release must still get its
+        # metadata and leave draft state; the failed step keeps the job red.
+        if: ${{ !cancelled() }}
         env:
           ARTIFACT_ID: ${{ steps.artifact.outputs.artifact_id }}
+          REGISTER_RESULT: ${{ steps.artifact.outcome }}
         run: |
           IMAGE="$ECR_REGISTRY/$IMAGE_NAME"
+          case "$REGISTER_RESULT" in
+            success) ID_ROW="${ARTIFACT_ID}" ;;
+            skipped) ID_ROW="not registered (register_artifact: false)" ;;
+            *)       ID_ROW="registration failed — see run log" ;;
+          esac
 
-          # Drafts are not resolvable via releases/tags/:tag — list and filter.
-          RELEASE=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
-            --jq "[.[] | select(.tag_name==\"$TAG\")][0]")
-          if [ -z "$RELEASE" ] || [ "$RELEASE" = "null" ]; then
-            echo "no release found for tag $TAG"; exit 1
+          # Direct lookup first; drafts are not resolvable via releases/tags,
+          # so fall back to listing (upsert also covers backfilled tags that
+          # never had a release).
+          RELEASE_ID=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq '.id' 2>/dev/null || true)
+          if [ -z "$RELEASE_ID" ]; then
+            RELEASE_ID=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+              --jq "[.[] | select(.tag_name==\"$TAG\")][0].id // empty")
           fi
-          RELEASE_ID=$(echo "$RELEASE" | jq -r '.id')
-          BODY=$(echo "$RELEASE" | jq -r '.body // ""')
 
+          # shellcheck disable=SC2016  # backticks are markdown, not command substitution
+          SECTION=$(printf '## Artifact\n\n|  |  |\n|---|---|\n| Image | `%s` |\n| Digest | `%s` |\n| Pinned reference | `%s` |\n| Artifact ID | `%s` |' \
+            "$IMAGE:$IMAGE_TAG" "$DIGEST" "$IMAGE@$DIGEST" "$ID_ROW")
+
+          if [ -z "$RELEASE_ID" ]; then
+            gh release create "$TAG" --title "$TAG" --notes "$SECTION" --verify-tag
+            echo "created release $TAG"
+            exit 0
+          fi
+
+          BODY=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" --jq '.body // ""')
           # Idempotent: skip the append when this digest is already recorded.
           if ! printf '%s' "$BODY" | grep -qF "$DIGEST"; then
-            SECTION=$(printf '\n\n## Artifact\n\n|  |  |\n|---|---|\n| Image | `%s` |\n| Digest | `%s` |\n| Pinned reference | `%s` |\n| Artifact ID | `%s` |' \
-              "$IMAGE:$TAG" "$DIGEST" "$IMAGE@$DIGEST" "${ARTIFACT_ID:-not registered}")
-            BODY="${BODY}${SECTION}"
+            BODY=$(printf '%s\n\n%s' "$BODY" "$SECTION")
           fi
-
           # draft=false also repairs releases orphaned into draft state by a
           # tag delete/re-push.
+          printf '%s' "$BODY" > body.md
           gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
-            -F draft=false -f body="$BODY" > /dev/null
+            -F draft=false -F "body=@body.md" > /dev/null
           echo "release $TAG published with artifact metadata"

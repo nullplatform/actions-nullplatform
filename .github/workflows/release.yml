@@ -1,4 +1,7 @@
-name: tofu-release
+# Historically "tofu-release"; renamed when service repos (via
+# release-publish-oci) started consuming it too. Only the display name
+# changed — inputs, jobs, and defaults are untouched.
+name: release
 
 on:
   workflow_call:
