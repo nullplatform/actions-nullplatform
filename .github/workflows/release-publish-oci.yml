@@ -196,6 +196,11 @@ jobs:
       build_args: ${{ inputs.build_args }}
       also_tag_latest: ${{ inputs.also_tag_latest }}
       tag: ${{ inputs.existing_tag || needs.release.outputs.tag_name }}
+      # Build the TAG's code, not the run's checkout. The run always sits on
+      # the main branch (that is what makes the chain trigger at all), which
+      # coincides with the tagged commit for a fresh release — but never for
+      # an existing_tag recovery/backfill, where main has moved on.
+      ref: ${{ inputs.existing_tag || needs.release.outputs.tag_name }}
     secrets:
       aws_role_arn: ${{ secrets.aws_role_arn }}
 
