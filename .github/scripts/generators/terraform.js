@@ -76,15 +76,24 @@ function extractVariables(content) {
       fullBlock: blockContent.match(/validation\s*\{[\s\S]*?\n\s*\}/)?.[0] || ''
     } : null;
 
-    // Extract description
-    const descMatch = blockContent.match(/description\s*=\s*"([^"]+)"/);
-    const description = descMatch ? descMatch[1] : '';
+    // Extract description. Also matches heredoc form, which the single-line pattern missed
+    // and which left multi-line descriptions blank in the generated docs.
+    const descMatch = blockContent.match(/description\s*=\s*"([^"]+)"/)
+      || blockContent.match(/description\s*=\s*<<-?[A-Z]+\n([\s\S]*?)\n\s*[A-Z]+/);
+    const description = descMatch ? descMatch[1].trim() : '';
+
+    // A required variable renders in Basic Usage as "your-variable-name", which is useless
+    // for a version: the reader has no way to know that a pinned chart version is 2.44.0.
+    // An `# example:` comment in the variable block supplies a real, copy-pasteable value.
+    const exampleMatch = blockContent.match(/#\s*example:\s*(.+)/);
+    const example = exampleMatch ? exampleMatch[1].trim() : null;
 
     variables.push({
       name,
       hasDefault,
       validation,
       description,
+      example,
     });
   }
 
@@ -245,7 +254,7 @@ Respond with ONLY the JSON object:`;
  * Generate README content from AI response
  */
 function generateReadme(dir, parsed, context) {
-  const { moduleName, requiredVars, triggerVars, outputs, tag, repository } = context;
+  const { moduleName, requiredVars, triggerVars, variables, outputs, tag, repository } = context;
 
   // Build module source URL - use relative path from repo root
   // Handle both absolute paths (/Users/.../infrastructure/aws/s3) and relative paths (infrastructure/aws/s3)
@@ -266,7 +275,7 @@ function generateReadme(dir, parsed, context) {
   if (basicUsageVars.length > 0) {
     const maxVarLength = Math.max(...basicUsageVars.map(v => v.name.length));
     basicUsageBlock = '\n' + basicUsageVars.map(v =>
-      `  ${v.name.padEnd(maxVarLength)} = "your-${v.name.replace(/_/g, '-')}"`
+      `  ${v.name.padEnd(maxVarLength)} = "${v.example || `your-${v.name.replace(/_/g, '-')}`}"`
     ).join('\n') + '\n';
   }
 
@@ -293,7 +302,8 @@ function generateReadme(dir, parsed, context) {
           if (isTrigger) {
             value = `"${usage.triggerValue}"`;
           } else {
-            value = `"your-${varName.replace(/_/g, '-')}"`;
+            const v = variables.find(x => x.name === varName);
+            value = `"${v?.example || `your-${varName.replace(/_/g, '-')}`}"`;
           }
 
           const comment = isConditional ? `  # Required when ${usage.triggerVar} = "${usage.triggerValue}"` : '';
