@@ -1,0 +1,183 @@
+name: Release & register git artifact
+
+# The release-publish-oci chain's sibling for repositories whose deliverable
+# IS the repository: service/scope repos the agent git-clones (specs,
+# workflows, scripts — no image to build). One chained run: release-please
+# cuts the version, the SAME run registers a git_repository artifact pinning
+# the tag, and the release gets its artifact table and leaves draft state.
+#
+# Chained on purpose: release-please tags with GITHUB_TOKEN, and GitHub never
+# triggers workflows from bot-token events — a separate tag-triggered publish
+# does not fire.
+#
+# Caller shape:
+#
+#   jobs:
+#     release:
+#       uses: nullplatform/actions-nullplatform/.github/workflows/release-publish-git.yml@main
+#       with:
+#         existing_tag: ${{ inputs.existing_tag || '' }}
+#       secrets:
+#         artifact_np_api_key: ${{ secrets.ARTIFACT_NP_API_KEY }}
+#
+# Artifact registration additionally reads the NP_ARTIFACT_NRN repository (or
+# organization) variable — the owner NRN for the registered artifact.
+#
+# Recovery / backfill: dispatch the caller with existing_tag to register +
+# finalize a tag that already exists.
+
+on:
+  workflow_call:
+    inputs:
+      release-type:
+        description: 'Release Please release type'
+        required: false
+        type: string
+        default: terraform-module
+      update_readme_versions:
+        description: 'Update version references in README files after release'
+        required: false
+        type: boolean
+        default: true
+      existing_tag:
+        description: 'Register + finalize an existing tag instead of cutting a release'
+        required: false
+        type: string
+        default: ''
+      register_artifact:
+        description: 'Register the tag as a nullplatform git_repository artifact (requires artifact_np_api_key + NP_ARTIFACT_NRN)'
+        required: false
+        type: boolean
+        default: true
+      artifact_visible_to:
+        description: 'Visibility selector for the registered artifact'
+        required: false
+        type: string
+        default: 'organization=*'
+      np_cli_version:
+        description: 'np CLI version/channel for artifact registration (alpha-packages until artifact create reaches stable)'
+        required: false
+        type: string
+        default: 'alpha-packages'
+    secrets:
+      artifact_np_api_key:
+        description: 'nullplatform API key for artifact registration (required while register_artifact is true)'
+        required: false
+    outputs:
+      release_created:
+        description: 'true when a release was cut on this run'
+        value: ${{ jobs.release.outputs.release_created }}
+      tag_name:
+        description: 'The tag of the release'
+        value: ${{ jobs.release.outputs.tag_name }}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release:
+    if: ${{ inputs.existing_tag == '' }}
+    uses: ./.github/workflows/release.yml
+    with:
+      release-type: ${{ inputs.release-type }}
+      update_readme_versions: ${{ inputs.update_readme_versions }}
+
+  finalize-release:
+    name: Register artifact & finalize release
+    needs: [release]
+    if: ${{ !cancelled() && (needs.release.outputs.release_created == 'true' || inputs.existing_tag != '') }}
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ inputs.existing_tag || needs.release.outputs.tag_name }}
+      REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+    steps:
+      - name: Register git_repository artifact
+        id: artifact
+        if: ${{ inputs.register_artifact }}
+        env:
+          NULLPLATFORM_API_KEY: ${{ secrets.artifact_np_api_key }}
+          NP_ARTIFACT_NRN: ${{ vars.NP_ARTIFACT_NRN }}
+          VISIBLE_TO: ${{ inputs.artifact_visible_to }}
+          NP_CLI_VERSION: ${{ inputs.np_cli_version }}
+        run: |
+          set -o pipefail
+          # register_artifact is a declared choice: missing wiring is an error,
+          # not a silent skip (a typo'd secret name must not produce a green run).
+          if [ -z "$NULLPLATFORM_API_KEY" ]; then
+            echo "::error::register_artifact is true but the artifact_np_api_key secret is empty or not passed"
+            exit 1
+          fi
+          if [ -z "$NP_ARTIFACT_NRN" ]; then
+            echo "::error::register_artifact is true but the NP_ARTIFACT_NRN variable is not set"
+            exit 1
+          fi
+          curl -fsSL https://cli.nullplatform.com/install.sh | VERSION="$NP_CLI_VERSION" sh
+          export PATH="$HOME/.local/bin:$PATH"
+
+          # stdout only into the capture: stderr stays on the run log, so CLI
+          # warnings can never corrupt the JSON parse.
+          OUTPUT=$(np artifact create \
+            --nrn "$NP_ARTIFACT_NRN" \
+            --type git_repository \
+            --url "$REPO_URL" \
+            --reference "$TAG" \
+            --visible-to "$VISIBLE_TO" \
+            --format json)
+          echo "$OUTPUT"
+          ARTIFACT_ID=$(echo "$OUTPUT" | jq -r '.id // empty' || true)
+          if [ -z "$ARTIFACT_ID" ]; then
+            # Created (the command succeeded) but the id was not in the output:
+            # keep the run green and say so, never claim "not registered".
+            echo "::warning::artifact created but no id found in CLI output; release will say 'registered (id unavailable)'"
+            ARTIFACT_ID="registered (id unavailable)"
+          fi
+          echo "artifact_id=$ARTIFACT_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Append artifact metadata & publish release
+        # Runs even when registration failed: the release must still get its
+        # metadata and leave draft state; the failed step keeps the job red.
+        if: ${{ !cancelled() }}
+        env:
+          ARTIFACT_ID: ${{ steps.artifact.outputs.artifact_id }}
+          REGISTER_RESULT: ${{ steps.artifact.outcome }}
+        run: |
+          case "$REGISTER_RESULT" in
+            success) ID_ROW="${ARTIFACT_ID}" ;;
+            skipped) ID_ROW="not registered (register_artifact: false)" ;;
+            *)       ID_ROW="registration failed — see run log" ;;
+          esac
+
+          COMMIT=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq '.object.sha' 2>/dev/null || echo "unknown")
+
+          # Direct lookup first; drafts are not resolvable via releases/tags,
+          # so fall back to listing (upsert also covers backfilled tags that
+          # never had a release).
+          RELEASE_ID=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq '.id' 2>/dev/null || true)
+          if [ -z "$RELEASE_ID" ]; then
+            RELEASE_ID=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+              --jq "[.[] | select(.tag_name==\"$TAG\")][0].id // empty")
+          fi
+
+          # shellcheck disable=SC2016  # backticks are markdown, not command substitution
+          SECTION=$(printf '## Artifact\n\n|  |  |\n|---|---|\n| Repository | `%s` |\n| Reference | `%s` |\n| Commit | `%s` |\n| Artifact ID | `%s` |' \
+            "$REPO_URL" "$TAG" "$COMMIT" "$ID_ROW")
+
+          if [ -z "$RELEASE_ID" ]; then
+            gh release create "$TAG" --title "$TAG" --notes "$SECTION" --verify-tag
+            echo "created release $TAG"
+            exit 0
+          fi
+
+          BODY=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" --jq '.body // ""')
+          # Idempotent: skip the append when this reference is already recorded.
+          if ! printf '%s' "$BODY" | grep -qF "| Reference | \`$TAG\`"; then
+            BODY=$(printf '%s\n\n%s' "$BODY" "$SECTION")
+          fi
+          # draft=false also repairs releases orphaned into draft state by a
+          # tag delete/re-push.
+          printf '%s' "$BODY" > body.md
+          gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
+            -F draft=false -F "body=@body.md" > /dev/null
+          echo "release $TAG published with artifact metadata"
