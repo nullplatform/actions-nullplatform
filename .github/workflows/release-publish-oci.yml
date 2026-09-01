@@ -129,10 +129,10 @@ on:
         type: string
         default: 'organization=*'
       np_cli_version:
-        description: 'np CLI version/channel for artifact registration (alpha-packages until artifact create reaches stable)'
+        description: 'np CLI version/channel for artifact registration (alpha carries --tag/--changelog-file/--annotation)'
         required: false
         type: string
-        default: 'alpha-packages'
+        default: 'alpha'
     secrets:
       aws_role_arn:
         description: 'AWS IAM Role ARN for OIDC auth against ECR'
@@ -246,6 +246,24 @@ jobs:
             REPOSITORY="$REG_PATH/$IMAGE_NAME"
           fi
 
+          # Annotations are last-write-wins full replacement on the revision, so
+          # every run sends the complete set: the release-please notes as the
+          # curated changelog plus the OCI source/revision/version keys. The
+          # release body is truncated at its first '## Artifact' section so a
+          # backfill re-run never feeds our own appended metadata back in.
+          EXTRA_ARGS=()
+          RELEASE_BODY=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq '.body // ""' 2>/dev/null || true)
+          printf '%s' "$RELEASE_BODY" | sed '/^## Artifact/,$d' > changelog.md
+          if grep -q '[^[:space:]]' changelog.md; then
+            EXTRA_ARGS+=(--changelog-file changelog.md)
+          fi
+          # The image was built from the tag's commit, not the triggering sha
+          # (they differ on existing_tag backfills).
+          TAG_COMMIT=$(gh api "repos/$GITHUB_REPOSITORY/commits/$TAG" --jq '.sha' 2>/dev/null || true)
+          if [ -n "$TAG_COMMIT" ]; then
+            EXTRA_ARGS+=(--annotation "org.opencontainers.image.revision=$TAG_COMMIT")
+          fi
+
           # stdout only into the capture: stderr stays on the run log, so CLI
           # warnings can never corrupt the JSON parse.
           OUTPUT=$(np artifact create \
@@ -254,6 +272,10 @@ jobs:
             --registry "$REG_HOST" \
             --repository "$REPOSITORY" \
             --digest "$DIGEST" \
+            --tag "$IMAGE_TAG" \
+            --annotation "org.opencontainers.image.source=${{ github.server_url }}/$GITHUB_REPOSITORY" \
+            --annotation "org.opencontainers.image.version=$TAG" \
+            "${EXTRA_ARGS[@]}" \
             --visible-to "$VISIBLE_TO" \
             --format json)
           echo "$OUTPUT"
