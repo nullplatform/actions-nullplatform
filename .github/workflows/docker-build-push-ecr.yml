@@ -11,6 +11,11 @@ on:
         description: 'Build context directory'
         required: true
         type: string
+      submodules:
+        description: 'Check out git submodules before building (the build context includes them)'
+        required: false
+        type: boolean
+        default: false
       dockerfile:
         description: 'Path to Dockerfile relative to context'
         required: false
@@ -75,6 +80,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+        with:
+          submodules: ${{ inputs.submodules }}
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4
