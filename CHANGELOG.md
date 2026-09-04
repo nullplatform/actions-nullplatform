@@ -1,5 +1,53 @@
 # Changelog
 
+## [1.4.0](https://github.com/nullplatform/actions-nullplatform/compare/v1.3.2...v1.4.0) (2026-09-04)
+
+
+### Features
+
+* add reusable auto-merge-release-pr workflow ([ece8904](https://github.com/nullplatform/actions-nullplatform/commit/ece8904e4b7f387805cddf64c42854cb1df688f7))
+* add reusable auto-merge-release-pr workflow ([a9ead54](https://github.com/nullplatform/actions-nullplatform/commit/a9ead54378b1ebd4e9b11e7fdb794ee6c291c345))
+* chained release-publish-oci workflow + release.yml outputs ([6bab43c](https://github.com/nullplatform/actions-nullplatform/commit/6bab43c2b11d238a08297448b4ddca4a546d3575))
+* chained release-publish-oci workflow for service repos ([62f4ed5](https://github.com/nullplatform/actions-nullplatform/commit/62f4ed55964398ce8ef9de309b92a7aad9467bd3))
+* **docker-build-push-ecr:** add opt-in also_tag_latest input ([abbc3c6](https://github.com/nullplatform/actions-nullplatform/commit/abbc3c6e8f4349d0b934bb18b3f861201c647320))
+* **docker-build-push-ecr:** opt-in also_tag_latest input ([a8e1a6e](https://github.com/nullplatform/actions-nullplatform/commit/a8e1a6e85c93372a1831d51fa272676c80dd12ab))
+* **docker-build-push-ecr:** optional submodules checkout ([3788418](https://github.com/nullplatform/actions-nullplatform/commit/3788418c96138314695e865f4bec797a19cfa92f))
+* **docker-build-push-ecr:** optional submodules checkout ([8dce282](https://github.com/nullplatform/actions-nullplatform/commit/8dce2823e0ae83756e793f4e1b3c31863934e999))
+* **pr-checks-go:** add require-private-modules to fail fast on a missing credential ([44e5f13](https://github.com/nullplatform/actions-nullplatform/commit/44e5f1315fd33310b3684b286d5f206811a9847a))
+* **pr-checks-go:** allow resolving private nullplatform Go modules ([f908b50](https://github.com/nullplatform/actions-nullplatform/commit/f908b501ee8aba26cba35ccb2546c7fac74dee3d))
+* **pr-checks:** mint a GitHub App token for private dependency access ([73908ff](https://github.com/nullplatform/actions-nullplatform/commit/73908ff43f72f786637102ae33dedb48c1927f29))
+* **pr-checks:** resolve private nullplatform Go modules via a GitHub App token ([7cf4b2a](https://github.com/nullplatform/actions-nullplatform/commit/7cf4b2a1b1599c788b802aaf9d7380548de80a4b))
+* **release-publish-oci:** publish tag, changelog and OCI annotations ([e96e2f6](https://github.com/nullplatform/actions-nullplatform/commit/e96e2f6f598368697076104c76b2ac9053bae9cd))
+* **release-publish-oci:** publish tag, changelog and OCI annotations ([2b0be41](https://github.com/nullplatform/actions-nullplatform/commit/2b0be41b3575f36cd9274a3e4482f5bfcd83a763))
+* shellcheck auto-discovers extensionless scripts by shebang ([d36fbfc](https://github.com/nullplatform/actions-nullplatform/commit/d36fbfc81acfbdeb36c0bb1a595f48c24e347075))
+* shellcheck auto-discovers extensionless scripts by shebang ([e9bffbc](https://github.com/nullplatform/actions-nullplatform/commit/e9bffbc3edacf7590455d1121db583f8e368b143))
+* support explicit pr_number input in auto-merge-release-pr ([618f904](https://github.com/nullplatform/actions-nullplatform/commit/618f9045bac01d75ebb61cea3c358db2d70bf6f7))
+* support explicit pr_number input in auto-merge-release-pr ([9c05415](https://github.com/nullplatform/actions-nullplatform/commit/9c05415eafacc5745401b123c6af4123f975867a))
+
+
+### Bug Fixes
+
+* add DEPENDABOT_TOKEN fallback for Dependabot PR CI runs ([5e062ec](https://github.com/nullplatform/actions-nullplatform/commit/5e062ec1c71284c85609501eedb0d8ec082502c0))
+* add DEPENDABOT_TOKEN fallback for Dependabot PR CI runs ([79f4200](https://github.com/nullplatform/actions-nullplatform/commit/79f42007e0afd63e79d95dddd8bbda11ba7e9c97))
+* auto-merge-release-pr fails randomly when a release PR has zero checks yet ([2bb005f](https://github.com/nullplatform/actions-nullplatform/commit/2bb005f53b30b742764a616a877bcb44f130c97d))
+* **auto-merge-release:** use --admin to bypass base branch policy on merge ([4678465](https://github.com/nullplatform/actions-nullplatform/commit/4678465653e7f2d4a7c70cf7f1f3b5c15481dc92))
+* **auto-merge-release:** use --admin to bypass base branch policy on merge ([f3bf16b](https://github.com/nullplatform/actions-nullplatform/commit/f3bf16b4889ef36460c2a35cc34e7fe569c4f295))
+* avoid self-deadlock in auto-merge-release-pr ([2d3deeb](https://github.com/nullplatform/actions-nullplatform/commit/2d3deebca2061b87863db06904b8d479ea8b0e4c))
+* avoid self-deadlock waiting on the release PR's checks ([0f94afa](https://github.com/nullplatform/actions-nullplatform/commit/0f94afa8d44bf45847ebbb9bcface494fe6e3fa9))
+* **branch-validation:** skip validation for dependabot branches ([5c0f5d4](https://github.com/nullplatform/actions-nullplatform/commit/5c0f5d48e2d589568dcd71c7008375e3284b24d7))
+* **branch-validation:** skip validation for dependabot branches ([1310eeb](https://github.com/nullplatform/actions-nullplatform/commit/1310eeb3c3042e5e6a30ff94148a47aa2eaf6cdd))
+* **docker-build-push-ecr:** build backfills from the tag, not the dispatch branch ([b76f78a](https://github.com/nullplatform/actions-nullplatform/commit/b76f78ac49194c0879b1c2f904a5752305103ad2))
+* **docker-build-push-ecr:** build backfills from the tag, not the dispatch branch ([f341e7c](https://github.com/nullplatform/actions-nullplatform/commit/f341e7c34cf13f4dae34e63b04155171d69a2f5f))
+* **docker-ecr:** keep prerelease suffix in the published image tag ([0520a07](https://github.com/nullplatform/actions-nullplatform/commit/0520a07e97a3d9ac49761405b08f8f1421a58051))
+* **docker-ecr:** keep prerelease suffix in the published image tag ([028ced6](https://github.com/nullplatform/actions-nullplatform/commit/028ced65840ab16071f928c9c6bb7395861c00f8))
+* don't hard-fail when a previously-checked PR briefly reports no checks ([4944ab9](https://github.com/nullplatform/actions-nullplatform/commit/4944ab9141412646989a87be14949a2edcd44344))
+* only treat the specific 'no checks reported' error as checkless, never merge unverified ([200fc0e](https://github.com/nullplatform/actions-nullplatform/commit/200fc0e2aebfed802b3d157c363f1664b38caf7d))
+* **pr-checks:** gate the App token behind an opt-in input, not the org secret ([33e32f0](https://github.com/nullplatform/actions-nullplatform/commit/33e32f0b8e051a1aa2bd76e1653ca9521529ae21))
+* read only first line for shebang check (avoids SC2015, heredoc false positives) ([b979cf7](https://github.com/nullplatform/actions-nullplatform/commit/b979cf78ecdb6e6a44b09a6c925f6cd893eb9212))
+* **release-publish-oci:** address review — recovery path, artifact ([2dc2925](https://github.com/nullplatform/actions-nullplatform/commit/2dc2925d48bb991a54464a6476e0e1888989b0cf))
+* restore submodules default displaced by the ref input insertion ([1b58fc4](https://github.com/nullplatform/actions-nullplatform/commit/1b58fc446711851b944e661df7feacfdcef451c2))
+* tolerate a release PR having zero checks registered yet ([e1349e0](https://github.com/nullplatform/actions-nullplatform/commit/e1349e086f1a32a6f1f50ec36081f04cd836b50e))
+
 ## [1.3.2](https://github.com/nullplatform/actions-nullplatform/compare/v1.3.1...v1.3.2) (2026-05-21)
 
 
