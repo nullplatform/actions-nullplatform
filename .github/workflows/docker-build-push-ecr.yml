@@ -15,12 +15,12 @@ on:
         description: 'Check out git submodules before building (the build context includes them)'
         required: false
         type: boolean
+        default: false
       ref:
         description: 'Git ref to build from (branch, tag or SHA). Empty = the ref that triggered the run — pass the tag on recovery/backfill dispatches, or the image is built from the dispatched branch instead of the tagged commit'
         required: false
         type: string
         default: ''
-        default: false
       dockerfile:
         description: 'Path to Dockerfile relative to context'
         required: false
