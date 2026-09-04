@@ -16,6 +16,11 @@ on:
         required: false
         type: boolean
         default: false
+      ref:
+        description: 'Git ref to build from (branch, tag or SHA). Empty = the ref that triggered the run — pass the tag on recovery/backfill dispatches, or the image is built from the dispatched branch instead of the tagged commit'
+        required: false
+        type: string
+        default: ''
       dockerfile:
         description: 'Path to Dockerfile relative to context'
         required: false
@@ -82,6 +87,9 @@ jobs:
         uses: actions/checkout@v6
         with:
           submodules: ${{ inputs.submodules }}
+          # Empty ref = default (the triggering ref); backfills pass the tag so
+          # the image content matches the tagged commit, not the dispatch branch.
+          ref: ${{ inputs.ref }}
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4

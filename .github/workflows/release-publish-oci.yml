@@ -188,6 +188,9 @@ jobs:
     uses: ./.github/workflows/docker-build-push-ecr.yml
     with:
       image_name: ${{ inputs.image_name }}
+      # On existing_tag backfills the run is dispatched from a branch — build
+      # from the tag's commit, not the branch head.
+      ref: ${{ inputs.existing_tag || '' }}
       context: ${{ inputs.context }}
       dockerfile: ${{ inputs.dockerfile }}
       platforms: ${{ inputs.platforms }}
