@@ -55,10 +55,18 @@ jobs:
         with:
           registry-type: public
 
-      - name: Install Trivy
+      - name: Install Trivy (pinned + checksum verified)
         run: |
-          wget -q https://github.com/aquasecurity/trivy/releases/download/v0.69.2/trivy_0.69.2_Linux-64bit.deb
-          sudo dpkg -i trivy_0.69.2_Linux-64bit.deb
+          set -euo pipefail
+          TRIVY_VERSION="0.74.0"
+          tarball="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          base="https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}"
+          curl -fsSLO "${base}/${tarball}"
+          curl -fsSLo trivy_checksums.txt "${base}/trivy_${TRIVY_VERSION}_checksums.txt"
+          grep " ${tarball}\$" trivy_checksums.txt | sha256sum -c -
+          tar -xzf "${tarball}" trivy
+          sudo mv trivy /usr/local/bin/trivy
+          trivy --version
 
       - name: Get latest tags and scan images
         id: scan

@@ -71,8 +71,9 @@ jobs:
 
       - name: Run Trivy vulnerability scanner
         id: scan
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
+          version: 'v0.74.0'
           image-ref: '${{ inputs.image_name }}:scan'
           format: 'table'
           exit-code: '${{ inputs.exit_code }}'
@@ -82,8 +83,9 @@ jobs:
 
       - name: Generate SARIF report
         if: inputs.upload_sarif
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
+          version: 'v0.74.0'
           image-ref: '${{ inputs.image_name }}:scan'
           format: 'sarif'
           output: 'results.sarif'
