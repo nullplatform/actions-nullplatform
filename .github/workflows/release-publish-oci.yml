@@ -280,9 +280,15 @@ jobs:
             --annotation "org.opencontainers.image.version=$TAG" \
             "${EXTRA_ARGS[@]}" \
             --visible-to "$VISIBLE_TO" \
-            --format json)
+            --format json) || {
+            # np prints its error as JSON on stdout; without this the failing
+            # step shows only "exit code 1" and the cause is lost.
+            echo "::error::np artifact create failed"
+            echo "$OUTPUT"
+            exit 1
+          }
           echo "$OUTPUT"
-          ARTIFACT_ID=$(echo "$OUTPUT" | jq -r '.id // empty' || true)
+          ARTIFACT_ID=$(echo "$OUTPUT" | jq -r '.id // .resource_id // empty' || true)
           if [ -z "$ARTIFACT_ID" ]; then
             # Created (the command succeeded) but the id was not in the output:
             # keep the run green and say so, never claim "not registered".
@@ -325,10 +331,17 @@ jobs:
             exit 0
           fi
 
-          BODY=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" --jq '.body // ""')
-          # Idempotent: skip the append when this digest is already recorded.
-          if ! printf '%s' "$BODY" | grep -qF "$DIGEST"; then
+          # Replace, never append: every re-run (failed registration, backfill)
+          # rebuilds the image and gets a new digest, so a digest-based skip
+          # never matches and the release accumulates one '## Artifact' block
+          # per attempt. Drop everything from the first '## Artifact' on (same
+          # cut the changelog step uses) and write the current block once.
+          BODY=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" --jq '.body // ""' \
+            | sed '/^## Artifact/,$d')
+          if [ -n "$BODY" ]; then
             BODY=$(printf '%s\n\n%s' "$BODY" "$SECTION")
+          else
+            BODY="$SECTION"
           fi
           # draft=false also repairs releases orphaned into draft state by a
           # tag delete/re-push.
