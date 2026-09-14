@@ -70,11 +70,12 @@ jobs:
 
       - name: Get latest tags and scan images
         id: scan
+        env:
+          IMAGE_NAMES: ${{ inputs.image_names }}
+          REGISTRY: ${{ inputs.ecr_registry }}
+          SEVERITY: ${{ inputs.severity }}
+          UPLOAD_SARIF: ${{ inputs.upload_sarif }}
         run: |
-          IMAGE_NAMES="${{ inputs.image_names }}"
-          REGISTRY="${{ inputs.ecr_registry }}"
-          SEVERITY="${{ inputs.severity }}"
-
           VULNERABILITIES_FOUND=false
           REPORT=""
 
@@ -103,7 +104,7 @@ jobs:
             # Run Trivy and capture output
             RESULT=$(trivy image --severity "${SEVERITY}" --ignore-unfixed --format json "${FULL_IMAGE}" 2>/dev/null || echo "{}")
 
-            if [ "${{ inputs.upload_sarif }}" == "true" ]; then
+            if [ "${UPLOAD_SARIF}" == "true" ]; then
               mkdir -p sarif-results
               trivy image --severity "${SEVERITY}" --ignore-unfixed --format sarif --output "sarif-results/${IMAGE_NAME}.sarif" "${FULL_IMAGE}" 2>/dev/null || true
             fi
