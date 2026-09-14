@@ -1,0 +1,69 @@
+# Inventario central de binarios de terceros pineados en Dockerfiles.
+#
+# Estos binarios no los ve Dependabot: no estan en ningun go.mod ni package.json,
+# se bajan con curl dentro del Dockerfile. Trivy si los ve, porque lee la metadata
+# del binario Go compilado. Este archivo es lo que conecta una cosa con la otra.
+#
+# "ceiling" es el techo permitido. Es politica de la organizacion, no preferencia
+# de cada repo, y por eso vive aca y no distribuido.
+
+ceilings:
+  # kubectl soporta +-1 minor contra el cluster. Subir el techo es una decision de
+  # que version de k8s dejamos de soportar, no un bump de dependencia.
+  # Medido: ninguna version <=1.31 mejora; 1.37.0 limpia los 32, pero son 7 minors.
+  kubectl: "1.31.99"
+
+  # Helm 4 trae breaking changes. 3.22.0 ya escanea limpia, asi que no hay motivo
+  # para cruzar la mayor.
+  helm: "3.99.99"
+
+  # OpenTofu: sin techo. Los minors dentro de 1.x son compatibles.
+  tofu: null
+
+repos:
+  - repo: scopes
+    files:
+      - path: docker/containers.Dockerfile
+        pins:
+          - { arg: TOFU_VERSION,    tool: tofu,    prefix: "" }
+          - { arg: KUBECTL_VERSION, tool: kubectl, prefix: "" }
+          - { arg: HELM_VERSION,    tool: helm,    prefix: "" }
+      - path: docker/scheduled-task.Dockerfile
+        pins:
+          - { arg: KUBECTL_VERSION, tool: kubectl, prefix: "" }
+      # containers-datadog.Dockerfile no declara pines: es FROM containers y los hereda.
+
+  - repo: scopes-lambda
+    files:
+      - path: Dockerfile
+        pins: [ { arg: TOFU_VERSION, tool: tofu, prefix: "" } ]
+
+  - repo: scopes-static-files
+    files:
+      - path: Dockerfile
+        pins: [ { arg: TOFU_VERSION, tool: tofu, prefix: "" } ]
+
+  - repo: services-dynamo-db
+    files:
+      - path: Dockerfile
+        pins: [ { arg: TOFU_VERSION, tool: tofu, prefix: "" } ]
+
+  - repo: services-s-3
+    files:
+      - path: Dockerfile
+        pins: [ { arg: TOFU_VERSION, tool: tofu, prefix: "" } ]
+
+  - repo: services-postgresql-rds
+    files:
+      - path: Dockerfile.rds-postgres-db
+        pins: [ { arg: TOFU_VERSION, tool: tofu, prefix: "" } ]
+      - path: Dockerfile.rds-postgres-server
+        pins: [ { arg: TOFU_VERSION, tool: tofu, prefix: "" } ]
+
+  - repo: services-postgresql-k-8-s
+    files:
+      # Este repo pinea con prefijo "v" y construye la URL sin agregarlo.
+      - path: Dockerfile
+        pins:
+          - { arg: KUBECTL_VERSION, tool: kubectl, prefix: "v" }
+          - { arg: HELM_VERSION,    tool: helm,    prefix: "v" }

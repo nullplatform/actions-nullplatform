@@ -1,0 +1,92 @@
+name: vuln-bump
+
+# Propone bumps de los binarios de terceros pineados en los Dockerfiles de los
+# repos que publican imagenes.
+#
+# Por que existe: esos binarios (tofu, helm, kubectl) no los ve Dependabot — no
+# estan en ningun go.mod ni package.json, se bajan con curl dentro del Dockerfile.
+# Trivy si los ve, porque lee la metadata del binario Go compilado. En septiembre
+# de 2026 acumulaban 462 hallazgos CRITICAL/HIGH por estar simplemente atrasados.
+#
+# Que lo hace distinto de un bumper de versiones: el disparador no es "hay version
+# nueva" sino "esta version esta vulnerable". Resuelve la version MINIMA que deja
+# de estarlo, respetando el techo declarado en pins.yml. Eso evita el problema de
+# los bumpers por version: llevar helm a 4.x (breaking) o kubectl a 1.37 (rompe el
+# skew contra clusters de clientes) cuando 3.22.0 ya alcanza y 1.37 no es opcion.
+#
+# Arranca en dry_run: calcula y reporta, no abre nada.
+
+on:
+  schedule:
+    - cron: '45 12 * * 1'      # lunes 09:45 ART
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Solo calcular y reportar, sin abrir PRs'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    name: Resolver bumps minimos seguros
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Trivy (pinned + checksum verified)
+        run: |
+          set -euo pipefail
+          TRIVY_VERSION="0.74.0"
+          tarball="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          base="https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}"
+          # --retry: la CDN de releases devuelve 504 de a ratos y sin esto el run
+          # entero se cae por un hipo de red (paso en 2 runs seguidos el 2026-09-14).
+          curl -fsSLO --retry 3 --retry-all-errors --retry-delay 5 "${base}/${tarball}"
+          curl -fsSLo trivy_checksums.txt --retry 3 --retry-all-errors "${base}/trivy_${TRIVY_VERSION}_checksums.txt"
+          grep " ${tarball}\$" trivy_checksums.txt | sha256sum -c -
+          tar -xzf "${tarball}" trivy && sudo mv trivy /usr/local/bin/trivy
+
+      # El resultado de escanear <tool>@<version> no cambia nunca: el binario es
+      # inmutable. Solo la base de datos de Trivy se mueve, y por eso la clave
+      # incluye la semana.
+      - name: Cache de escaneos
+        uses: actions/cache@v4
+        with:
+          path: /tmp/vuln-bump-cache
+          key: vuln-bump-${{ hashFiles('.github/vuln-bump/pins.yml') }}-${{ github.run_id }}
+          restore-keys: vuln-bump-
+
+      - name: Instalar deps
+        run: pip install --quiet pyyaml
+
+      - name: Resolver
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CACHE_DIR: /tmp/vuln-bump-cache
+        run: |
+          node .github/vuln-bump/plan.js .github/vuln-bump/pins.yml | tee plan.txt
+          {
+            echo '## Plan de bumps'
+            echo '```'
+            cat plan.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Abrir PRs
+        # Requiere la GitHub App np-vuln-bump (contents:write + pull_requests:write
+        # sobre los repos de pins.yml). Hasta que exista, el workflow solo reporta.
+        if: ${{ inputs.dry_run == false }}
+        run: |
+          echo "::notice::La apertura de PRs necesita la App np-vuln-bump. Pendiente."
+          exit 1
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: vuln-bump-plan
+          path: |
+            plan.txt
+            plan.json
