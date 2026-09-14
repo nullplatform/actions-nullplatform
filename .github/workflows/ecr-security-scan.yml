@@ -18,10 +18,17 @@ on:
         type: string
         default: 'CRITICAL,HIGH'
       upload_sarif:
-        description: 'Upload SARIF results to GitHub Security tab'
+        description: >-
+          Upload SARIF results to the GitHub Security tab. Defaults to false:
+          this workflow writes one SARIF per image and uploads them under a
+          single category, which CodeQL rejects when more than one image is
+          scanned ("does not support uploading multiple SARIF runs with the
+          same category"). Only enable it for a single-image caller. Multi-image
+          upload needs one category per image, which requires running the scan
+          as a matrix - tracked for the centralized scanner.
         required: false
         type: boolean
-        default: true
+        default: false
     secrets:
       aws_role_arn:
         description: 'AWS IAM Role ARN for OIDC authentication'
