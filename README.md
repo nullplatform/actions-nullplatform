@@ -49,6 +49,8 @@ This repository provides reusable GitHub Actions workflows for CI/CD, security s
 | [Changelog and Release](#changelog-and-release) | 📦 Release & Changelog | Automated version bumping and changelog generation |
 | [tofu-release](#tofu-release) | 📦 Release & Changelog | Creates releases for Terraform modules with version updates |
 | [release-publish-oci](#release-publish-oci) | 📦 Release & Changelog | Chained release: release-please, ECR image publish, artifact registration, release metadata |
+| [publish-test-image-oci](#publish-test-image-oci) | 📦 Release & Changelog | Test image from a branch or PR: ECR push with a test- tag and a test artifact, no release |
+| [register-oci-artifact](#register-oci-artifact) | 📦 Release & Changelog | Registers a pushed image as a nullplatform oci_image artifact (used by the two above) |
 | [tofu-pre-release](#tofu-pre-release) | 📦 Release & Changelog | Previews changelog in pull requests before release |
 | [readme-ai-generator-v2](#readme-ai-generator-v2) | 📚 Documentation | AI-powered README generation for projects |
 | [tofu-docs](#tofu-docs) | 📚 Documentation | Generates Terraform module documentation |
@@ -394,7 +396,7 @@ Validates that Node.js projects build successfully using pnpm. Only runs the bui
 
 ### release-publish-oci
 
-The standard release pipeline for service repos that ship an OCI image. Chains release-please, the ECR image publish, nullplatform artifact registration, and release finalization (artifact metadata appended to the body, release force-published) in a single workflow run — so the GitHub limitation that bot-token events never trigger workflows is structurally irrelevant, and no PAT is needed. Supports `existing_tag` for recovery/backfill of already-created tags.
+The standard release pipeline for service repos that ship an OCI image. Chains release-please, the ECR image publish, nullplatform artifact registration, and release finalization (artifact metadata appended to the body, release force-published) in a single workflow run — so the GitHub limitation that bot-token events never trigger workflows is structurally irrelevant, and no PAT is needed. Supports `existing_tag` for recovery/backfill of already-created tags. Registration runs through [register-oci-artifact](#register-oci-artifact).
 
 **Inputs**
 
@@ -448,6 +450,91 @@ jobs:
       aws_role_arn: ${{ secrets.AWS_ROLE_ARN_ECR_PUSH }}
       artifact_np_api_key: ${{ secrets.ARTIFACT_NP_API_KEY }}
 ```
+
+### publish-test-image-oci
+
+Builds a test image from the branch it is dispatched on (or from a same-repo pull request), pushes it to ECR with the tag `test-<branch-slug>-<short-sha>`, and registers it as an `oci_image` artifact so it can go into a package version and be rolled out to a test scope. No release-please, no git tag, no GitHub release, never `latest`. The run's job summary lists the image, digest, pinned reference, registry/repository, artifact ID and revision ID.
+
+A test build can't be mistaken for a release:
+
+- The tag always starts with `test-` and never contains a dot, so it never looks like a version to `docker-build-push-ecr` or `ecr-security-scan`. Release tags must never start with `test-`.
+- The artifact is owned by the `NP_TEST_ARTIFACT_NRN` variable, which must differ from `NP_ARTIFACT_NRN`. Artifacts are unique on (owner NRN, registry, repository), so test builds become revisions of a separate artifact and never the newest revision of the release artifact. That newest revision is what the UI's **Existing artifact** picker and tag-less lookups default to.
+- The revision carries `com.nullplatform.build.type=test`, `com.nullplatform.build.branch` and `com.nullplatform.build.run` annotations, plus `org.opencontainers.image.source` and `org.opencontainers.image.revision`.
+- The artifact is visible to its owner NRN only, unless `artifact_visible_to` adds NRNs. `organization=*` is refused.
+
+Fork pull requests and `pull_request_target` are refused, so fork code never runs with push credentials. ECR Public has no lifecycle policies and artifacts can't be deleted, so test tags stay until someone removes them (`aws ecr-public batch-delete-image`).
+
+**Inputs**
+
+| Name | Description | Required | Default |
+|------|-------------|----------|---------|
+| image_name | Image name under the registry (e.g. scopes/lambda) | Yes | - |
+| context | Docker build context | No | . |
+| dockerfile | Dockerfile path relative to context | No | Dockerfile |
+| submodules | Check out git submodules before building | No | false |
+| platforms | Target platforms for the multi-arch build | No | linux/amd64,linux/arm64 |
+| ecr_registry | ECR registry URL prefix | No | public.ecr.aws/nullplatform |
+| aws_region | AWS region for ECR | No | us-east-1 |
+| build_args | Docker build arguments (newline-separated) | No | '' |
+| register_artifact | Register the image as an artifact owned by `NP_TEST_ARTIFACT_NRN` | No | true |
+| artifact_visible_to | Extra NRNs that can use the test artifact, space or comma separated | No | '' (owner NRN only) |
+| np_cli_version | np CLI version/channel for artifact registration | No | alpha |
+
+**Secrets**
+- `aws_role_arn` (required): AWS IAM Role ARN for OIDC auth against ECR
+- `artifact_np_api_key`: nullplatform API key allowed to create artifacts at `NP_TEST_ARTIFACT_NRN` (required while `register_artifact` is true)
+
+**Outputs**: `image_tag`, `image_digest`, `artifact_id`, `artifact_revision_id`.
+
+Reads the `NP_TEST_ARTIFACT_NRN` and `NP_ARTIFACT_NRN` repository/organization variables, and requires the caller to grant `contents: read` and `id-token: write`. A preflight job checks the permissions and the artifact wiring before anything is built.
+
+**Usage**
+
+```yaml
+name: test-image
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  test-image:
+    uses: nullplatform/actions-nullplatform/.github/workflows/publish-test-image-oci.yml@v1
+    with:
+      image_name: scopes/lambda
+    secrets:
+      aws_role_arn: ${{ secrets.AWS_ROLE_ARN_ECR_PUSH }}
+      artifact_np_api_key: ${{ secrets.ARTIFACT_NP_API_KEY }}
+```
+
+Run it from the branch to test: **Actions > test-image > Run workflow**, or `gh workflow run test-image.yml --ref <branch>`. To build pull requests that carry a label instead, trigger on `pull_request: types: [labeled, synchronize]` and guard the job with `if: contains(github.event.pull_request.labels.*.name, 'test-image')`.
+
+### register-oci-artifact
+
+Registers an image that is already in a registry as a nullplatform `oci_image` artifact revision with `np artifact create`, and outputs the artifact and revision IDs. `release-publish-oci` and `publish-test-image-oci` both call it. It always adds `org.opencontainers.image.source`, and can add the build commit (`source_ref`), a version, the notes of a GitHub release as the changelog, and extra `key=value` annotations. Registering the same digest and tag again returns the same revision and replaces its annotations.
+
+**Inputs**
+
+| Name | Description | Required | Default |
+|------|-------------|----------|---------|
+| nrn | Owner NRN of the artifact | Yes | - |
+| ecr_registry | Registry URL prefix the image was pushed under | No | public.ecr.aws/nullplatform |
+| image_name | Image name under the registry | Yes | - |
+| image_tag | Tag the image was pushed with | Yes | - |
+| image_digest | Image digest (sha256:...) | Yes | - |
+| source_ref | Git ref or commit the image was built from, recorded as `org.opencontainers.image.revision` | No | '' |
+| version | Value for `org.opencontainers.image.version` | No | '' |
+| changelog_release_tag | Use the notes of the GitHub release for this tag as the changelog | No | '' |
+| annotations | Extra annotations, one `key=value` per line | No | '' |
+| visible_to | Visibility NRN selectors, space or comma separated | No | '' (owner NRN only) |
+| np_cli_version | np CLI version/channel | No | alpha |
+
+**Secrets**
+- `np_api_key`: nullplatform API key allowed to create artifacts at `nrn` (the job fails when it is empty)
+
+**Outputs**: `artifact_id`, `artifact_revision_id`.
+
+Workflows in this repo call it with the path form (`uses: ./.github/workflows/register-oci-artifact.yml`) so it runs from the same ref the caller pinned. Other repos can call it like any reusable workflow.
 
 ## Notes
 
