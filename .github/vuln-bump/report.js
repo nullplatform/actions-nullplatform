@@ -1,16 +1,16 @@
 #!/usr/bin/env node
 // report.js <plan.json> [prs.json]
-// Arma el mensaje de Slack. SIEMPRE emite, aunque este todo limpio: si el lunes
-// no llega el mensaje, eso es la alerta. Un reporte que solo habla cuando
-// encuentra algo es indistinguible de uno muerto — es exactamente como estuvo
-// este escaneo cuatro meses sin que nadie lo notara.
+// Builds the Slack message. It ALWAYS emits, even when everything is clean: if
+// Monday's message does not arrive, that is the alert. A report that only speaks
+// when it finds something is indistinguishable from a dead one - which is exactly
+// how this scan sat for four months without anyone noticing.
 const fs = require('fs');
 
 const plan = JSON.parse(fs.readFileSync(process.argv[2] || 'plan.json', 'utf8'));
-// Tolerante a propósito: si open-pr no corrió (dry-run, o falta la App) el
-// archivo puede no existir o estar vacío. El reporte debe salir igual — es la
-// senal de vida del lunes, y perderla por un JSON vacio seria el mismo bug que
-// ya nos costo cuatro meses.
+// Deliberately tolerant: if open-pr did not run (dry-run, or the App is
+// missing) the file may not exist or be empty. The report must go out anyway -
+// it is Monday's sign of life, and losing it to an empty JSON would be the same
+// bug that already cost us four months.
 let prs = [], prFailures = [];
 try {
   const raw = JSON.parse(fs.readFileSync(process.argv[3] || 'prs.json', 'utf8'));
@@ -21,16 +21,16 @@ const prByRepo = Object.fromEntries(prs.map(p => [p.repo, p.url]));
 const failedRepos = new Set(prFailures.map(f => f.repo));
 
 const pick = (...s) => plan.filter(p => s.includes(p.status));
-const bumped = pick('BUMP', 'BUMP_PARCIAL');
-const stuck  = pick('SIN_MEJORA_MATERIAL');
-const errors = pick('ERROR', 'ARG_NO_ENCONTRADO');
-const clean  = pick('YA_LIMPIA');
+const bumped = pick('BUMP', 'BUMP_PARTIAL');
+const stuck  = pick('NO_MATERIAL_GAIN');
+const errors = pick('ERROR', 'ARG_NOT_FOUND');
+const clean  = pick('ALREADY_CLEAN');
 
 const lines = [];
 const push = (s) => lines.push(s);
 
 if (bumped.length) {
-  push('*Para aprobar*');
+  push('*Ready to approve*');
   const seen = new Set();
   for (const p of bumped) {
     const url = prByRepo[p.repo];
@@ -41,18 +41,18 @@ if (bumped.length) {
     const what = same.map(x => `${x.tool} ${x.current} → ${(x.prefix || '') + x.target}`).join(', ');
     const left = same.reduce((a, x) => a + (x.status === 'BUMP' ? 0 : (x.remaining || 0)), 0);
     const tail = url ? ` → <${url}|PR>`
-      : failedRepos.has(p.repo) ? ` → :warning: _no se pudo abrir el PR_`
-      : ' → _sin PR: falta la App_';
-    push(`• \`${p.repo}\` — ${what}${left ? ` (quedan ${left})` : ''}` + tail);
+      : failedRepos.has(p.repo) ? ` → :warning: _could not open the PR_`
+      : ' → _no PR: App not configured_';
+    push(`• \`${p.repo}\` — ${what}${left ? ` (${left} left)` : ''}` + tail);
     if (url) for (const x of same) seen.add(`${x.repo}|${url}`);
   }
   push('');
 }
 
 if (stuck.length) {
-  // Agrupado por herramienta+version: sin esto la misma linea aparece una vez por
-  // repo (tofu sale 6 veces identico) y el mensaje se vuelve ruido que se ignora.
-  push('*Sin remediación automática*');
+  // Grouped by tool+version: without this the same line appears once per repo
+  // (tofu shows up 6 times identically) and the message becomes ignorable noise.
+  push('*No automatic remediation*');
   const groups = {};
   for (const p of stuck) (groups[`${p.tool} ${p.current}`] ||= []).push(p);
   for (const [k, ps] of Object.entries(groups)) {
@@ -60,31 +60,31 @@ if (stuck.length) {
     const each = ps[0].remaining || 0;
     const shown = repos.slice(0, 4).map(r => `\`${r}\``).join(', ');
     const more = repos.length > 4 ? ` +${repos.length - 4}` : '';
-    push(`• *${k}* — ${each} hallazgos × ${ps.length} ${ps.length > 1 ? 'pines' : 'pin'} = ${each * ps.length}`);
-    push(`   ${shown}${more} · ninguna versión permitida mejora`);
+    push(`• *${k}* - ${each} findings x ${ps.length} ${ps.length > 1 ? 'pins' : 'pin'} = ${each * ps.length}`);
+    push(`   ${shown}${more} · no allowed version improves on it`);
   }
   push('');
 }
 
 if (errors.length) {
-  push('*No se pudo resolver*');
-  for (const p of errors) push(`• \`${p.repo}\` — ${p.tool || p.arg}: ${p.status}${p.stage ? ` en ${p.stage}` : ''}`);
+  push('*Could not resolve*');
+  for (const p of errors) push(`• \`${p.repo}\` - ${p.tool || p.arg}: ${p.status}${p.stage ? ` at ${p.stage}` : ''}`);
   push('');
 }
 
 if (clean.length) {
   const names = [...new Set(clean.map(p => `${p.tool} ${p.current}`))];
-  push(`*Al día* (${clean.length}): ${names.join(', ')}`);
+  push(`*Up to date* (${clean.length}): ${names.join(', ')}`);
 }
 
 const total = plan.length;
 const headline = bumped.length
-  ? `${bumped.length} bump${bumped.length > 1 ? 's' : ''} propuesto${bumped.length > 1 ? 's' : ''}`
-  : 'sin bumps disponibles';
+  ? `${bumped.length} bump${bumped.length > 1 ? 's' : ''} proposed`
+  : 'no bumps available';
 const runUrl = process.env.GITHUB_SERVER_URL && process.env.GITHUB_RUN_ID
   ? `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}` : null;
 
-// Slack corta los bloques de texto en 3000 caracteres.
+// Slack truncates text blocks at 3000 characters.
 const chunks = [];
 let buf = '';
 for (const l of lines) {
@@ -95,9 +95,9 @@ if (buf.trim()) chunks.push(buf);
 
 const payload = {
   blocks: [
-    { type: 'header', text: { type: 'plain_text', text: `Bumps de seguridad — ${total} pines revisados, ${headline}`, emoji: true } },
-    ...chunks.map(c => ({ type: 'section', text: { type: 'mrkdwn', text: c.trim() || '_sin detalle_' } })),
-    ...(runUrl ? [{ type: 'context', elements: [{ type: 'mrkdwn', text: `<${runUrl}|Ver la corrida>` }] }] : []),
+    { type: 'header', text: { type: 'plain_text', text: `Security bumps - ${total} pins checked, ${headline}`, emoji: true } },
+    ...chunks.map(c => ({ type: 'section', text: { type: 'mrkdwn', text: c.trim() || '_no detail_' } })),
+    ...(runUrl ? [{ type: 'context', elements: [{ type: 'mrkdwn', text: `<${runUrl}|View the run>` }] }] : []),
   ],
 };
 

@@ -1,21 +1,22 @@
 name: vuln-bump
 
-# Propone bumps de los binarios de terceros pineados en los Dockerfiles de los
-# repos que publican imagenes, y abre el PR que los aplica.
+# Proposes bumps for the third-party binaries pinned in the Dockerfiles of the
+# repos that publish images, and opens the PR that applies them.
 #
-# Por que existe: esos binarios (tofu, helm, kubectl) no los ve Dependabot — no
-# estan en ningun go.mod ni package.json, se bajan con curl dentro del Dockerfile.
-# Trivy si los ve, porque lee la metadata del binario Go compilado. En septiembre
-# de 2026 acumulaban 462 hallazgos CRITICAL/HIGH por estar simplemente atrasados.
+# Why it exists: Dependabot cannot see those binaries (tofu, helm, kubectl) - they
+# are in no go.mod or package.json, they are curl'd inside the Dockerfile. Trivy
+# can, because it reads the metadata of the compiled Go binary. In September 2026
+# they had accumulated 462 fixable CRITICAL/HIGH findings purely from being behind.
 #
-# El disparador es la vulnerabilidad, no la version nueva. Resuelve la version
-# MINIMA que deja de estarlo, respetando el techo de pins.yml. Un bumper por
-# version habria llevado helm a 4.x (breaking) y kubectl a 1.37 (rompe el skew
-# contra clusters de clientes); este propone helm 3.22.0, que alcanza, y para
-# kubectl reporta que no hay salida segura en vez de inventar una.
+# The trigger is the vulnerability, not a new version. It resolves the LOWEST
+# version that is no longer vulnerable, within the ceiling from pins.yml. A
+# version-driven bumper would have taken helm to 4.x (breaking) and kubectl to
+# 1.37 (breaks the skew against customer clusters); this one proposes helm 3.22.0,
+# which suffices, and for kubectl reports that no safe version exists rather than
+# inventing one.
 #
-# El PR queda para que una persona lo apruebe. Al mergear, release-please corta la
-# version y la cadena republica la imagen a ECR — eso ya funciona.
+# The PR is left for a person to approve. On merge, release-please cuts the
+# version and the chain republishes the image to ECR - that part already works.
 
 on:
   schedule:
@@ -23,26 +24,26 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: 'Solo calcular y reportar, sin abrir PRs'
+        description: 'Only compute and report, do not open PRs'
         type: boolean
         default: true
 
 permissions:
   contents: read
 
-# Un dispatch manual durante el cron abriria PRs duplicados en la ventana entre
-# el chequeo de idempotencia y la creacion. Una corrida a la vez.
+# A manual dispatch during the cron would open duplicate PRs in the window between
+# the idempotency check and creation. One run at a time.
 concurrency:
   group: vuln-bump
   cancel-in-progress: false
 
 env:
-  # En el cron siempre abre PRs; el dry-run es solo para la corrida manual.
+  # The cron always opens PRs; dry-run is only for the manual dispatch.
   DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
 
 jobs:
   bump:
-    name: Resolver y proponer
+    name: Resolve and propose
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
@@ -53,16 +54,16 @@ jobs:
           TRIVY_VERSION="0.74.0"
           tarball="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
           base="https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}"
-          # --retry: la CDN de releases devuelve 504 de a ratos, y sin esto el run
-          # entero se cae por un hipo de red (paso dos veces seguidas el 2026-09-14).
+          # --retry: the releases CDN returns 504 now and then, and without this the
+          # whole run dies on a network hiccup (happened twice in a row 2026-09-14).
           curl -fsSLO --retry 3 --retry-all-errors --retry-delay 5 "${base}/${tarball}"
           curl -fsSLo trivy_checksums.txt --retry 3 --retry-all-errors "${base}/trivy_${TRIVY_VERSION}_checksums.txt"
           grep " ${tarball}\$" trivy_checksums.txt | sha256sum -c -
           tar -xzf "${tarball}" trivy && sudo mv trivy /usr/local/bin/trivy
 
-      # Escanear <tool>@<version> da siempre lo mismo: el binario es inmutable.
-      # Solo se mueve la base de Trivy, y por eso la clave lleva el numero de run.
-      - name: Cache de escaneos y de la DB de Trivy
+      # Scanning <tool>@<version> always yields the same result: the binary is
+      # immutable. Only Trivy's DB moves, which is why the key carries the run id.
+      - name: Cache scans and the Trivy DB
         uses: actions/cache@v4
         with:
           path: |
@@ -73,27 +74,27 @@ jobs:
 
       - run: pip install --quiet pyyaml
 
-      - name: Resolver bumps minimos seguros
+      - name: Resolve minimum safe bumps
         env:
           GH_TOKEN: ${{ github.token }}
           CACHE_DIR: /tmp/vuln-bump-cache
         run: node .github/vuln-bump/plan.js .github/vuln-bump/pins.yml | tee plan.txt
 
-      # La App np-vuln-bump: contents:write + pull_requests:write, acotada a los
-      # repos de pins.yml. Si no esta configurada, el workflow reporta igual en vez
-      # de fallar — el reporte del lunes es la senal de vida y no debe depender de
-      # que la parte de escritura este lista.
-      - name: La App esta configurada?
+      # The np-vuln-bump App: contents:write + pull_requests:write, scoped to the
+      # repos in pins.yml. If it is not configured the workflow still reports
+      # instead of failing - Monday's report is the sign of life and must not
+      # depend on the write side being ready.
+      - name: Is the App configured?
         id: appcheck
         env:
           APP_ID: ${{ secrets.VULN_BUMP_APP_ID }}
         run: |
           if [ -n "${APP_ID}" ]; then echo "ok=true" >> "$GITHUB_OUTPUT"
           else echo "ok=false" >> "$GITHUB_OUTPUT"
-               echo "::warning::VULN_BUMP_APP_ID no esta configurado: no se abriran PRs"
+               echo "::warning::VULN_BUMP_APP_ID is not configured: no PRs will be opened"
           fi
 
-      - name: Token de la App
+      - name: App token
         id: apptoken
         if: env.DRY_RUN != 'true' && steps.appcheck.outputs.ok == 'true'
         uses: actions/create-github-app-token@v1
@@ -102,25 +103,25 @@ jobs:
           private-key: ${{ secrets.VULN_BUMP_PRIVATE_KEY }}
           owner: nullplatform
 
-      - name: Abrir PRs
+      - name: Open PRs
         if: env.DRY_RUN != 'true' && steps.appcheck.outputs.ok == 'true'
         env:
           GH_TOKEN: ${{ steps.apptoken.outputs.token }}
         run: node .github/vuln-bump/open-pr.js plan.json
 
-      - name: Armar el reporte
+      - name: Build the report
         run: node .github/vuln-bump/report.js plan.json prs.json | tee report.txt
 
-      - name: Enviar a Slack
+      - name: Send to Slack
         env:
           WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
         run: |
           if [ -z "${WEBHOOK}" ]; then
-            echo "::warning::SLACK_WEBHOOK_URL no esta configurado: el reporte queda solo en el summary"
+            echo "::warning::SLACK_WEBHOOK_URL is not configured: the report stays in the summary only"
             exit 0
           fi
-          # --fail-with-body: curl devuelve 0 aunque Slack rechace el payload, y sin
-          # esto un mensaje mal formado pasaria por enviado.
+          # --fail-with-body: curl returns 0 even when Slack rejects the payload, and
+          # without this a malformed message would pass as delivered.
           curl -sS --fail-with-body -X POST -H 'Content-type: application/json' \
             --data @slack.json "${WEBHOOK}"
 
@@ -129,9 +130,9 @@ jobs:
         run: |
           {
             echo '## Plan'
-            echo '```'; cat plan.txt 2>/dev/null || echo '(sin plan)'; echo '```'
-            echo '## Reporte'
-            echo '```'; cat report.txt 2>/dev/null || echo '(sin reporte)'; echo '```'
+            echo '```'; cat plan.txt 2>/dev/null || echo '(no plan)'; echo '```'
+            echo '## Report'
+            echo '```'; cat report.txt 2>/dev/null || echo '(no report)'; echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v7
