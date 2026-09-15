@@ -1,70 +1,28 @@
-# Central inventory of third-party binaries pinned in Dockerfiles.
+# Policy for vuln-bump. NOT an inventory: the pins themselves are discovered by
+# scanning the org's Dockerfiles (see discover.js).
 #
-# Dependabot cannot see these: they are not in any go.mod or package.json, they
-# are curl'd inside the Dockerfile. Trivy can, because it reads the metadata of
-# the compiled Go binary. This file is what connects the two.
-#
-# "ceiling" is the highest version allowed. It is org policy, not a per-repo
-# preference, which is why it lives here rather than distributed.
+# A hand-written inventory was the first design and it was stale within a day -
+# it declared 12 pins while the org had 20, and three of the eight it missed
+# were still on the vulnerable tofu 1.10.10. Only what a tool cannot infer stays
+# declared here.
 
+# ARG name -> upstream project. An ARG that is not listed is reported as
+# UNMAPPED rather than guessed: the bot must never edit a pin nobody mapped.
+tools:
+  TOFU: tofu
+  KUBECTL: kubectl
+  HELM: helm
+
+# Highest version allowed per tool. This is org policy, not a per-repo
+# preference, which is why it lives here.
 ceilings:
-  # kubectl supports +-1 minor against the cluster. Raising this ceiling decides
-  # which Kubernetes version we stop supporting - it is not a dependency bump.
-  # Measured: no version <=1.31 improves; 1.37.0 clears all 32, but that is seven
-  # minors away.
+  # kubectl supports +-1 minor against the cluster. Raising this decides which
+  # Kubernetes version we stop supporting - it is not a dependency bump.
+  # Measured: no version <=1.31 improves; 1.37.0 clears all 32, seven minors away.
   kubectl: "1.31.99"
 
-  # Helm 4 carries breaking changes. 3.22.0 already scans clean, so there is no
-  # reason to cross the major.
+  # Helm 4 carries breaking changes. 3.22.0 already scans clean.
   helm: "3.99.99"
 
   # OpenTofu: no ceiling. Minors within 1.x are backward compatible.
   tofu: null
-
-repos:
-  - repo: scopes
-    files:
-      - path: docker/containers.Dockerfile
-        pins:
-          - { arg: TOFU_VERSION,    tool: tofu,    prefix: "" }
-          - { arg: KUBECTL_VERSION, tool: kubectl, prefix: "" }
-          - { arg: HELM_VERSION,    tool: helm,    prefix: "" }
-      - path: docker/scheduled-task.Dockerfile
-        pins:
-          - { arg: KUBECTL_VERSION, tool: kubectl, prefix: "" }
-      # containers-datadog.Dockerfile declares no pins: it is FROM containers and inherits them.
-
-  - repo: scopes-lambda
-    files:
-      - path: Dockerfile
-        pins: [ { arg: TOFU_VERSION, tool: tofu, prefix: "" } ]
-
-  - repo: scopes-static-files
-    files:
-      - path: Dockerfile
-        pins: [ { arg: TOFU_VERSION, tool: tofu, prefix: "" } ]
-
-  - repo: services-dynamo-db
-    files:
-      - path: Dockerfile
-        pins: [ { arg: TOFU_VERSION, tool: tofu, prefix: "" } ]
-
-  - repo: services-s-3
-    files:
-      - path: Dockerfile
-        pins: [ { arg: TOFU_VERSION, tool: tofu, prefix: "" } ]
-
-  - repo: services-postgresql-rds
-    files:
-      - path: Dockerfile.rds-postgres-db
-        pins: [ { arg: TOFU_VERSION, tool: tofu, prefix: "" } ]
-      - path: Dockerfile.rds-postgres-server
-        pins: [ { arg: TOFU_VERSION, tool: tofu, prefix: "" } ]
-
-  - repo: services-postgresql-k-8-s
-    files:
-      # This repo pins with a leading "v" and builds the URL without adding one.
-      - path: Dockerfile
-        pins:
-          - { arg: KUBECTL_VERSION, tool: kubectl, prefix: "v" }
-          - { arg: HELM_VERSION,    tool: helm,    prefix: "v" }

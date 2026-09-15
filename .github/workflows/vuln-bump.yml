@@ -74,11 +74,19 @@ jobs:
 
       - run: pip install --quiet pyyaml
 
+      # Discover the pins instead of declaring them. The hand-written inventory
+      # was stale within a day: it listed 12 while the org had 20, and three of
+      # the eight it missed were still on the vulnerable tofu 1.10.10.
+      - name: Discover pins across the org
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node .github/vuln-bump/discover.js .github/vuln-bump/pins.yml
+
       - name: Resolve minimum safe bumps
         env:
           GH_TOKEN: ${{ github.token }}
           CACHE_DIR: /tmp/vuln-bump-cache
-        run: node .github/vuln-bump/plan.js .github/vuln-bump/pins.yml | tee plan.txt
+        run: node .github/vuln-bump/plan.js .github/vuln-bump/pins.yml discovered.json | tee plan.txt
 
       # The np-vuln-bump App: contents:write + pull_requests:write, scoped to the
       # repos in pins.yml. If it is not configured the workflow still reports
@@ -140,6 +148,7 @@ jobs:
         with:
           name: vuln-bump-${{ github.run_id }}
           path: |
+            discovered.json
             plan.txt
             plan.json
             report.txt

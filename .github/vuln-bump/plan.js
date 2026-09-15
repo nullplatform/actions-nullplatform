@@ -8,28 +8,23 @@ const sh = (c) => execSync(c, { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 })
 const yaml = (f) => JSON.parse(sh(`python3 -c "import yaml,json,sys; print(json.dumps(yaml.safe_load(open('${f}'))))"`));
 
 const RESOLVE = process.env.RESOLVE_JS || require('path').join(__dirname, 'resolve.js');
-const cfg = yaml(process.argv[2] || 'pins.yml');
-const GH = (p) => JSON.parse(sh(`gh api "${p}"`));
+const cfg = yaml(process.argv[2] || '.github/vuln-bump/pins.yml');
 
-// Read the live ARG value straight from the repo: the Dockerfile is the source
-// of truth, not a copy in this file that drifts out of sync.
-function currentValue(repo, path, arg) {
-  const content = Buffer.from(GH(`repos/nullplatform/${repo}/contents/${path}`).content, 'base64').toString();
-  const m = content.match(new RegExp(`^ARG ${arg}=(.*)$`, 'm'));
-  return m ? m[1].trim() : null;
-}
+// discover.js already read the live ARG value from each Dockerfile, so there is
+// no inventory here to drift out of sync with the repos.
+const discovered = JSON.parse(fs.readFileSync(process.argv[3] || 'discovered.json', 'utf8'));
 
 const plan = [];
-for (const r of cfg.repos) for (const f of r.files) for (const p of f.pins) {
-  const raw = currentValue(r.repo, f.path, p.arg);
-  if (raw === null) { plan.push({ ...p, repo: r.repo, path: f.path, status: 'ARG_NOT_FOUND' }); continue; }
-  const cur = p.prefix ? raw.replace(new RegExp(`^${p.prefix}`), '') : raw;
+for (const p of discovered) {
+  // UNMAPPED / NO_DEFAULT pass straight through to the report: visible, never guessed.
+  if (p.status) { plan.push(p); continue; }
+  const cur = p.prefix ? p.current.replace(new RegExp(`^${p.prefix}`), '') : p.current;
   const ceil = cfg.ceilings[p.tool] || '';
-  process.stderr.write(`\n[${r.repo}/${f.path}] ${p.arg}=${raw}\n`);
+  process.stderr.write(`\n[${p.repo}/${p.path}] ${p.arg}=${p.current}\n`);
   let out;
   try { out = JSON.parse(sh(`node ${RESOLVE} ${p.tool} ${cur} ${ceil}`)); }
   catch (e) { out = { status: 'ERROR', detail: String(e.message || e).slice(0, 100) }; }
-  plan.push({ repo: r.repo, path: f.path, arg: p.arg, tool: p.tool, prefix: p.prefix, current: raw, ...out });
+  plan.push({ ...p, ...out });
 }
 
 const W = (s, n) => String(s ?? '-').padEnd(n).slice(0, n);
