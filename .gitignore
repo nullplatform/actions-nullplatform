@@ -34,3 +34,9 @@ build/
 *.tmp
 *.temp
 .cache/
+# artefactos que genera vuln-bump en la corrida
+plan.json
+plan.txt
+prs.json
+report.txt
+slack.json
