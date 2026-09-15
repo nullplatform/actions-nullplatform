@@ -11,10 +11,14 @@ const plan = JSON.parse(fs.readFileSync(process.argv[2] || 'plan.json', 'utf8'))
 // archivo puede no existir o estar vacío. El reporte debe salir igual — es la
 // senal de vida del lunes, y perderla por un JSON vacio seria el mismo bug que
 // ya nos costo cuatro meses.
-let prs = [];
-try { prs = JSON.parse(fs.readFileSync(process.argv[3] || 'prs.json', 'utf8')) || []; }
-catch { prs = []; }
+let prs = [], prFailures = [];
+try {
+  const raw = JSON.parse(fs.readFileSync(process.argv[3] || 'prs.json', 'utf8'));
+  if (Array.isArray(raw)) prs = raw;
+  else { prs = raw.opened || []; prFailures = raw.failed || []; }
+} catch { prs = []; }
 const prByRepo = Object.fromEntries(prs.map(p => [p.repo, p.url]));
+const failedRepos = new Set(prFailures.map(f => f.repo));
 
 const pick = (...s) => plan.filter(p => s.includes(p.status));
 const bumped = pick('BUMP', 'BUMP_PARCIAL');
@@ -36,7 +40,10 @@ if (bumped.length) {
     const same = bumped.filter(x => x.repo === p.repo);
     const what = same.map(x => `${x.tool} ${x.current} → ${(x.prefix || '') + x.target}`).join(', ');
     const left = same.reduce((a, x) => a + (x.status === 'BUMP' ? 0 : (x.remaining || 0)), 0);
-    push(`• \`${p.repo}\` — ${what}${left ? ` (quedan ${left})` : ''}` + (url ? ` → <${url}|PR>` : ' → _sin PR: falta la App_'));
+    const tail = url ? ` → <${url}|PR>`
+      : failedRepos.has(p.repo) ? ` → :warning: _no se pudo abrir el PR_`
+      : ' → _sin PR: falta la App_';
+    push(`• \`${p.repo}\` — ${what}${left ? ` (quedan ${left})` : ''}` + tail);
     if (url) for (const x of same) seen.add(`${x.repo}|${url}`);
   }
   push('');

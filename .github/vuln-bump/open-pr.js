@@ -13,6 +13,11 @@ const fs = require('fs');
 const sh = (c) => execSync(c, { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 }).trim();
 const api = (args) => JSON.parse(sh(`gh api ${args}`));
 const b64 = (s) => Buffer.from(s, 'utf8').toString('base64');
+const os = require('os'), path = require('path');
+// Todo texto libre va al shell por archivo, nunca inline. JSON.stringify NO
+// escapa backticks, y el markdown del body esta lleno: el shell los tomaba como
+// sustitucion de comandos y las celdas de la tabla salian vacias.
+const tmpfile = (content) => { const f = path.join(os.tmpdir(), `vb-${process.pid}-${Math.random().toString(36).slice(2)}`); fs.writeFileSync(f, content); return f; };
 
 const plan = JSON.parse(fs.readFileSync(process.argv[2] || 'plan.json', 'utf8'));
 const actionable = plan.filter(p => p.status === 'BUMP' || p.status === 'BUMP_PARCIAL');
@@ -21,7 +26,20 @@ const byRepo = {};
 for (const p of actionable) (byRepo[p.repo] ||= []).push(p);
 
 const results = [];
+const failures = [];
 for (const [repo, pins] of Object.entries(byRepo)) {
+  try {
+    processRepo(repo, pins);
+  } catch (e) {
+    // Un repo que falla (App no instalada ahi, rama protegida, API caida) no
+    // debe frenar a los demas ni dejar el reporte sin prs.json.
+    const reason = String(e.stderr || e.message || e).split('\n')[0].slice(0, 160);
+    console.log(`  ${repo}: FALLO — ${reason}`);
+    failures.push({ repo, pins, error: reason });
+  }
+}
+
+function processRepo(repo, pins) {
   // La rama nombra el conjunto de bumps, no la fecha: si el PR de la semana
   // pasada sigue abierto con los mismos targets, esta corrida lo reconoce.
   const slug = pins.map(p => `${p.tool}-${p.target}`).sort().join('_');
@@ -32,7 +50,7 @@ for (const [repo, pins] of Object.entries(byRepo)) {
     if (open.length) {
       console.log(`  ${repo}: PR ya abierto ${open[0].html_url}`);
       results.push({ repo, pins, url: open[0].html_url, reused: true });
-      continue;
+      return;
     }
   } catch { /* sin PR previo */ }
 
@@ -59,13 +77,15 @@ for (const [repo, pins] of Object.entries(byRepo)) {
         : `. ${newVal} is the lowest version that scans clean.`) +
       `\n\nOpened by the vuln-bump workflow.\n\nCo-Authored-By: Claude Opus 5 <noreply@anthropic.com>`;
 
+    const msgFile = tmpfile(msg);
     sh(`gh api -X PUT repos/nullplatform/${repo}/contents/${p.path} ` +
-       `-f message=${JSON.stringify(msg)} -f content="${b64(updated)}" ` +
+       `-F message=@${msgFile} -f content="${b64(updated)}" ` +
        `-f sha="${file.sha}" -f branch="${branch}"`);
+    fs.unlinkSync(msgFile);
     lines.push(`| \`${p.arg}\` | \`${p.current}\` | \`${newVal}\` | ${p.current_findings} → ${p.status === 'BUMP' ? '0' : p.remaining} |`);
   }
 
-  if (!lines.length) { console.log(`  ${repo}: sin cambios que commitear`); continue; }
+  if (!lines.length) { console.log(`  ${repo}: sin cambios que commitear`); return; }
 
   const title = pins.length === 1
     ? `fix(deps): bump ${pins[0].tool} to ${(pins[0].prefix || '') + pins[0].target}`
@@ -92,11 +112,14 @@ for (const [repo, pins] of Object.entries(byRepo)) {
     '🤖 Generated with [Claude Code](https://claude.com/claude-code)',
   ].join('\n');
 
+  const bodyFile = tmpfile(body), titleFile = tmpfile(title);
   const url = sh(`gh pr create -R nullplatform/${repo} --base ${base} --head ${branch} ` +
-                 `--title ${JSON.stringify(title)} --body ${JSON.stringify(body)}`);
+                 `--title "$(cat ${titleFile})" --body-file ${bodyFile}`);
+  fs.unlinkSync(bodyFile); fs.unlinkSync(titleFile);
   console.log(`  ${repo}: ${url}`);
   results.push({ repo, pins, url, reused: false });
 }
 
-fs.writeFileSync('prs.json', JSON.stringify(results, null, 2));
+fs.writeFileSync('prs.json', JSON.stringify({ opened: results, failed: failures }, null, 2));
+if (failures.length) console.log(`\nFALLARON ${failures.length} repo(s): ${failures.map(f => f.repo).join(', ')}`);
 console.log(`\nPRs: ${results.length} (${results.filter(r => r.reused).length} ya existian)`);

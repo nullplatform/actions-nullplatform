@@ -13,7 +13,9 @@ const sh = (c, o = {}) => execSync(c, { encoding: 'utf8', stdio: ['ignore','pipe
 const cmp = (a, b) => { const A = a.split('.').map(Number), B = b.split('.').map(Number);
   for (let i = 0; i < 3; i++) if ((A[i]||0) !== (B[i]||0)) return (A[i]||0) - (B[i]||0); return 0; };
 
-const gh = repo => sh(`curl -s "https://api.github.com/repos/${repo}/releases?per_page=100" | jq -r '.[].tag_name'`)
+// gh api usa GH_TOKEN: sin auth el limite es 60 req/hora por IP, y los runners
+// de Actions comparten IP. Con curl pelado esto se cae al azar.
+const gh = repo => sh(`gh api "repos/${repo}/releases?per_page=100" --jq '.[].tag_name'`)
   .split('\n').filter(t => /^v\d+\.\d+\.\d+$/.test(t)).map(t => t.slice(1));
 
 const SOURCES = {
@@ -45,8 +47,12 @@ function scan(tool, v) {
     fs.chmodSync(path.join(d, tool), 0o755);
     fs.writeFileSync(path.join(d, 'Dockerfile'), `FROM alpine:3.21\nCOPY ${tool} /usr/local/bin/${tool}\n`);
     sh(`docker build -q -t vb:${tool}-${v} ${d}`);
-    const j = sh(`docker run --rm -v /tmp/trivycache:/root/.cache/ -v /var/run/docker.sock:/var/run/docker.sock ` +
-      `aquasec/trivy:0.74.0 image --severity CRITICAL,HIGH --ignore-unfixed --scanners vuln --format json vb:${tool}-${v}`);
+    // Trivy nativo si esta instalado (CI); si no, el contenedor (local).
+    const flags = `--severity CRITICAL,HIGH --ignore-unfixed --scanners vuln --format json vb:${tool}-${v}`;
+    let trivyBin = null; try { trivyBin = sh('command -v trivy'); } catch {}
+    const j = trivyBin
+      ? sh(`trivy image ${flags}`)
+      : sh(`docker run --rm -v /tmp/trivycache:/root/.cache/ -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.74.0 image ${flags}`);
     const n = (JSON.parse(j).Results || [])
       .filter(r => (r.Target || '').includes(tool))
       .reduce((a, r) => a + (r.Vulnerabilities || []).length, 0);

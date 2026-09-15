@@ -30,6 +30,12 @@ on:
 permissions:
   contents: read
 
+# Un dispatch manual durante el cron abriria PRs duplicados en la ventana entre
+# el chequeo de idempotencia y la creacion. Una corrida a la vez.
+concurrency:
+  group: vuln-bump
+  cancel-in-progress: false
+
 env:
   # En el cron siempre abre PRs; el dry-run es solo para la corrida manual.
   DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
@@ -56,10 +62,12 @@ jobs:
 
       # Escanear <tool>@<version> da siempre lo mismo: el binario es inmutable.
       # Solo se mueve la base de Trivy, y por eso la clave lleva el numero de run.
-      - name: Cache de escaneos
+      - name: Cache de escaneos y de la DB de Trivy
         uses: actions/cache@v4
         with:
-          path: /tmp/vuln-bump-cache
+          path: |
+            /tmp/vuln-bump-cache
+            ~/.cache/trivy
           key: vuln-bump-${{ hashFiles('.github/vuln-bump/pins.yml') }}-${{ github.run_id }}
           restore-keys: vuln-bump-
 
