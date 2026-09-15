@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // plan.js - reads pins.yml, resolves every pin and emits the bump plan.
 // In dry-run it prints the table and touches no repo.
-const { execSync } = require('child_process');
+const { execSync, execFileSync } = require('child_process');
 const fs = require('fs');
 
 const sh = (c) => execSync(c, { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 }).trim();
@@ -22,7 +22,8 @@ for (const p of discovered) {
   const ceil = cfg.ceilings[p.tool] || '';
   process.stderr.write(`\n[${p.repo}/${p.path}] ${p.arg}=${p.current}\n`);
   let out;
-  try { out = JSON.parse(sh(`node ${RESOLVE} ${p.tool} ${cur} ${ceil}`)); }
+  // cur comes from a Dockerfile: argv, never a shell string.
+  try { out = JSON.parse(execFileSync('node', [RESOLVE, p.tool, cur, ceil], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 }).trim()); }
   catch (e) { out = { status: 'ERROR', detail: String(e.message || e).slice(0, 100) }; }
   plan.push({ ...p, ...out });
 }

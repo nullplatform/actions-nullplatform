@@ -8,10 +8,13 @@
 // Idempotent: if a PR with the same branch is already open, it does not open
 // another. Without this, every Monday would stack an identical PR while the
 // previous one waits for review.
-const { execSync } = require('child_process');
+const { execSync, execFileSync } = require('child_process');
 const fs = require('fs');
 
 const sh = (c) => execSync(c, { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 }).trim();
+// Repo names and paths reach here from discover.js, i.e. from repo content.
+// execFileSync passes argv with no shell in between.
+const ghArgs = (...a) => execFileSync('gh', a, { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 }).trim();
 const api = (args) => JSON.parse(sh(`gh api ${args}`));
 const b64 = (s) => Buffer.from(s, 'utf8').toString('base64');
 const os = require('os'), path = require('path');
@@ -57,12 +60,13 @@ function processRepo(repo, pins) {
 
   const base = api(`repos/nullplatform/${repo}`).default_branch;
   const head = api(`repos/nullplatform/${repo}/git/ref/heads/${base}`).object.sha;
-  try { sh(`gh api -X POST repos/nullplatform/${repo}/git/refs -f ref="refs/heads/${branch}" -f sha="${head}"`); }
+  try { ghArgs('api', '-X', 'POST', `repos/nullplatform/${repo}/git/refs`,
+               '-f', `ref=refs/heads/${branch}`, '-f', `sha=${head}`); }
   catch { /* branch already exists: reuse it */ }
 
   const lines = [];
   for (const p of pins) {
-    const file = api(`repos/nullplatform/${repo}/contents/${p.path}?ref=${branch}`);
+    const file = JSON.parse(ghArgs('api', `repos/nullplatform/${repo}/contents/${p.path}?ref=${branch}`));
     const content = Buffer.from(file.content, 'base64').toString();
     const newVal = (p.prefix || '') + p.target;
     const re = new RegExp(`^ARG ${p.arg}=.*$`, 'm');
@@ -79,9 +83,9 @@ function processRepo(repo, pins) {
       `\n\nOpened by the vuln-bump workflow.\n\nCo-Authored-By: Claude Opus 5 <noreply@anthropic.com>`;
 
     const msgFile = tmpfile(msg);
-    sh(`gh api -X PUT repos/nullplatform/${repo}/contents/${p.path} ` +
-       `-F message=@${msgFile} -f content="${b64(updated)}" ` +
-       `-f sha="${file.sha}" -f branch="${branch}"`);
+    ghArgs('api', '-X', 'PUT', `repos/nullplatform/${repo}/contents/${p.path}`,
+           '-F', `message=@${msgFile}`, '-f', `content=${b64(updated)}`,
+           '-f', `sha=${file.sha}`, '-f', `branch=${branch}`);
     fs.unlinkSync(msgFile);
     lines.push(`| \`${p.arg}\` | \`${p.current}\` | \`${newVal}\` | ${p.current_findings} → ${p.status === 'BUMP' ? '0' : p.remaining} |`);
   }
@@ -113,10 +117,10 @@ function processRepo(repo, pins) {
     '🤖 Generated with [Claude Code](https://claude.com/claude-code)',
   ].join('\n');
 
-  const bodyFile = tmpfile(body), titleFile = tmpfile(title);
-  const url = sh(`gh pr create -R nullplatform/${repo} --base ${base} --head ${branch} ` +
-                 `--title "$(cat ${titleFile})" --body-file ${bodyFile}`);
-  fs.unlinkSync(bodyFile); fs.unlinkSync(titleFile);
+  const bodyFile = tmpfile(body);
+  const url = ghArgs('pr', 'create', '-R', `nullplatform/${repo}`, '--base', base,
+                     '--head', branch, '--title', title, '--body-file', bodyFile);
+  fs.unlinkSync(bodyFile);
   console.log(`  ${repo}: ${url}`);
   results.push({ repo, pins, url, reused: false });
 }
