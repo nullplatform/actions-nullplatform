@@ -1,0 +1,107 @@
+name: renovate
+
+# Weekly bumps for the third-party binaries pinned in Dockerfiles (tofu, helm,
+# kubectl, and any version written into a GitHub release URL).
+#
+# Dependabot cannot see these - its docker ecosystem reads FROM lines, not
+# ARG + curl. Trivy detects them but cannot name the release that fixes them:
+# of 54 findings against the tofu binary, 53 report the fixed version of an
+# internal Go module, not of tofu. So the fix has to be a version bump in the
+# Dockerfile, and Renovate is the tool that already does that reliably.
+#
+# The policy - which ARG maps to which upstream, how far a bump may go - lives in
+# renovate-config.js. The repos it touches are the ones the np-vuln-bump App is
+# installed on. Merging a PR triggers release-please, which republishes the
+# image to ECR; the weekly ecr-security-scan then reports what is still open.
+
+on:
+  schedule:
+    - cron: '45 12 * * 1'      # Mondays 09:45 ART
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Log what would change without opening PRs'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: renovate
+  cancel-in-progress: false
+
+env:
+  # The cron always opens PRs; dry-run is only for the manual dispatch.
+  DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+
+jobs:
+  renovate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+
+      # Without the App there is nothing to authenticate as. Fail loudly rather
+      # than run Renovate with a token that cannot write anywhere.
+      - name: Is the App configured?
+        env:
+          APP_ID: ${{ secrets.VULN_BUMP_APP_ID }}
+        run: |
+          if [ -z "${APP_ID}" ]; then
+            echo "::error::VULN_BUMP_APP_ID is not configured. Renovate needs the np-vuln-bump App token."
+            exit 1
+          fi
+
+      - name: App token
+        id: app
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.VULN_BUMP_APP_ID }}
+          private-key: ${{ secrets.VULN_BUMP_PRIVATE_KEY }}
+          owner: nullplatform
+
+      - name: Renovate
+        uses: renovatebot/github-action@dcfba84a42d1b5d5e49bf131b1bf53511851a123 # v46.3.1
+        with:
+          token: ${{ steps.app.outputs.token }}
+          configurationFile: renovate-config.js
+          renovate-version: 44.93.4
+        env:
+          LOG_LEVEL: info
+          DRY_RUN: ${{ env.DRY_RUN }}
+
+      # Renovate has no Slack integration of its own. This lists the PRs it opened
+      # in this run and posts them - and it posts even when the count is zero. A
+      # report that only speaks when it has something to say is indistinguishable
+      # from a dead one; that is how the image scan sat broken for four months.
+      - name: Notify Slack
+        if: env.DRY_RUN != 'true'
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          if [ -z "${WEBHOOK}" ]; then
+            echo "::warning::SLACK_WEBHOOK_URL is not configured: skipping the Slack report"
+            exit 0
+          fi
+          since=$(date -u -d '3 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+          gh search prs --owner nullplatform --label security --state open \
+            --created ">=${since}" --limit 50 \
+            --json url,title,repository > prs.json
+          count=$(jq 'length' prs.json)
+          jq -n --arg n "$count" --arg run "$RUN_URL" --slurpfile prs prs.json '
+            {blocks: (
+              [{type:"header", text:{type:"plain_text", text:("Pinned binaries - " + $n + " PR(s) opened this week"), emoji:true}}]
+              + (if ($prs[0]|length) > 0 then
+                  [{type:"section", text:{type:"mrkdwn", text:
+                    ($prs[0] | map("• `" + .repository.name + "` - <" + .url + "|" + .title + ">") | join("\n"))}}]
+                 else
+                  [{type:"section", text:{type:"mrkdwn", text:"Nothing to bump. Every pinned binary is at the highest version its ceiling allows."}}]
+                 end)
+              + [{type:"context", elements:[{type:"mrkdwn", text:("<" + $run + "|View the run>")}]}]
+            )}' > slack.json
+          # --fail-with-body: curl returns 0 even when Slack rejects the payload.
+          curl -sS --fail-with-body -X POST -H 'Content-type: application/json' \
+            --data @slack.json "${WEBHOOK}"
