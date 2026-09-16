@@ -51,7 +51,12 @@ module.exports = {
   prConcurrentLimit: 10,
   prHourlyLimit: 0,
   labels: ['dependencies', 'security'],
-  branchPrefix: 'renovate/',
+  // The org's branch-validation check only accepts conventional-commit prefixes
+  // (feat|fix|chore|...). A "renovate/" branch fails it before anyone reads the PR.
+  // branchPrefixOld lets Renovate migrate the branch it already opened under the
+  // old prefix instead of abandoning that PR and opening a duplicate.
+  branchPrefix: 'fix/renovate-',
+  branchPrefixOld: 'renovate/',
 
   // fix(deps): is what release-please needs to cut a patch and republish the image.
   semanticCommits: 'enabled',
