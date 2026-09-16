@@ -1,0 +1,78 @@
+name: ecr-scan-all
+
+# Scans EVERY image in the public registry, biweekly, and always reports.
+#
+# Replaces the per-repo scheduled-scan.yml callers (k8s-tools, customers-aws-image),
+# which together covered 3 of 32 images and sat broken for four months without
+# anyone noticing - nobody watches another team's repo. One cron, one role, one
+# report: the repositories are discovered from ECR itself, never listed by hand.
+#
+# Cadence ladder agreed with security: base image rebuilt on the 1st/15th,
+# Renovate bumps on the 2nd/16th, this scan on the 3rd/17th reports what is
+# still open after both.
+#
+# Needs the github-actions-ecr-public-reader role to trust this repo and to hold
+# ecr-public:DescribeRepositories on repository/* (iac-null-runtime/iam). Until
+# then the discover job fails loudly on the missing secret.
+
+on:
+  schedule:
+    - cron: '30 12 3,17 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ecr-scan-all
+  cancel-in-progress: false
+
+jobs:
+  discover:
+    name: Discover repositories
+    runs-on: ubuntu-24.04
+    permissions:
+      id-token: write
+      contents: read
+    outputs:
+      images: ${{ steps.list.outputs.images }}
+    steps:
+      - name: Is the role configured?
+        env:
+          ROLE: ${{ secrets.AWS_ROLE_ARN_ECR_READ }}
+        run: |
+          if [ -z "${ROLE}" ]; then
+            echo "::error::AWS_ROLE_ARN_ECR_READ is not configured in this repo. Set it to arn:aws:iam::283477532906:role/github-actions-ecr-public-reader once that role trusts actions-nullplatform."
+            exit 1
+          fi
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_ECR_READ }}
+          aws-region: us-east-1
+
+      - name: List every repository in the registry
+        id: list
+        run: |
+          set -euo pipefail
+          images=$(aws ecr-public describe-repositories --region us-east-1 \
+            --query 'repositories[].repositoryName' --output json | jq -c 'sort')
+          echo "images=${images}" >> "$GITHUB_OUTPUT"
+          echo "Discovered $(echo "${images}" | jq length) repositories"
+          echo "${images}" | jq -r '.[]' | sed 's/^/  /'
+
+  scan:
+    name: Scan
+    needs: discover
+    permissions:
+      id-token: write
+      contents: read
+      security-events: write
+      actions: read
+    uses: ./.github/workflows/ecr-security-scan.yml
+    with:
+      image_names: ${{ needs.discover.outputs.images }}
+      always_notify: true
+    secrets:
+      aws_role_arn: ${{ secrets.AWS_ROLE_ARN_ECR_READ }}
+      slack_webhook_url: ${{ secrets.SLACK_SECURITY_WEBHOOK }}

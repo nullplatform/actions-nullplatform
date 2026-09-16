@@ -29,6 +29,14 @@ on:
         required: false
         type: boolean
         default: false
+      always_notify:
+        description: >-
+          Post to Slack even when nothing was found. A report that only speaks
+          when it has findings is indistinguishable from a dead one - that is how
+          this scan sat broken for four months. The centralized caller sets this.
+        required: false
+        type: boolean
+        default: false
     secrets:
       aws_role_arn:
         description: 'AWS IAM Role ARN for OIDC authentication'
@@ -87,6 +95,7 @@ jobs:
           REPORT=""
           UNSCANNED=""
           STALE=""
+          SCANNED=0
 
           for IMAGE_NAME in $(echo "$IMAGE_NAMES" | jq -r '.[]'); do
             echo "Finding latest tag for ${IMAGE_NAME}..."
@@ -149,9 +158,14 @@ jobs:
             fi
 
             echo "  Critical: ${CRITICAL}, High: ${HIGH}"
+            SCANNED=$((SCANNED+1))
           done
 
-          echo "vulnerabilities_found=${VULNERABILITIES_FOUND}" >> "$GITHUB_OUTPUT"
+          {
+            echo "vulnerabilities_found=${VULNERABILITIES_FOUND}"
+            echo "scanned=${SCANNED}"
+            echo "total=$(echo "$IMAGE_NAMES" | jq length)"
+          } >> "$GITHUB_OUTPUT"
           if [ -n "${UNSCANNED}" ]; then VULNERABILITIES_FOUND=true; fi
           REPORT="${REPORT}${UNSCANNED}${STALE}"
           if [ -n "${STALE}" ]; then VULNERABILITIES_FOUND=true; fi
@@ -169,39 +183,36 @@ jobs:
         continue-on-error: true
 
       - name: Send Slack alert
-        if: steps.scan.outputs.vulnerabilities_found == 'true'
+        if: steps.scan.outputs.vulnerabilities_found == 'true' || inputs.always_notify
+        env:
+          FOUND: ${{ steps.scan.outputs.vulnerabilities_found }}
+          REPORT: ${{ steps.scan.outputs.report }}
+          SCANNED: ${{ steps.scan.outputs.scanned }}
+          TOTAL: ${{ steps.scan.outputs.total }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          WEBHOOK: ${{ secrets.slack_webhook_url }}
         run: |
-          REPORT='${{ steps.scan.outputs.report }}'
-          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-
-          curl -X POST -H 'Content-type: application/json' \
-            --data "{
-              \"blocks\": [
-                {
-                  \"type\": \"header\",
-                  \"text\": {
-                    \"type\": \"plain_text\",
-                    \"text\": \"Security Alert: Vulnerabilities Found\",
-                    \"emoji\": true
-                  }
-                },
-                {
-                  \"type\": \"section\",
-                  \"text\": {
-                    \"type\": \"mrkdwn\",
-                    \"text\": \"The following images have CRITICAL or HIGH vulnerabilities:\\n${REPORT}\"
-                  }
-                },
-                {
-                  \"type\": \"section\",
-                  \"text\": {
-                    \"type\": \"mrkdwn\",
-                    \"text\": \"<${RUN_URL}|View full scan results>\"
-                  }
-                }
-              ]
-            }" \
-            '${{ secrets.slack_webhook_url }}'
+          set -euo pipefail
+          if [ -z "${WEBHOOK}" ]; then
+            echo "::warning::slack_webhook_url is empty: skipping the Slack alert"
+            exit 0
+          fi
+          # The scan step pre-escapes REPORT for hand-built JSON (backslash-n, backslash-quote).
+          # Undo that and let jq do the escaping: hand-escaping is how a report ends up unsent.
+          REPORT_TXT=$(printf '%b' "${REPORT}" | sed 's/\\"/"/g')
+          if [ "${FOUND}" = "true" ]; then
+            HEADLINE="Image scan: findings in the public registry"
+            BODY="Scanned ${SCANNED}/${TOTAL} images. CRITICAL/HIGH with a fix, not scannable, or stopped versioning:${REPORT_TXT}"
+          else
+            HEADLINE="Image scan: ${SCANNED}/${TOTAL} images clean"
+            BODY="No fixable CRITICAL or HIGH findings. This message is the heartbeat: if it stops arriving, the scan is broken."
+          fi
+          jq -n --arg h "$HEADLINE" --arg b "$BODY" --arg run "$RUN_URL" '{blocks:[
+            {type:"header",text:{type:"plain_text",text:$h,emoji:true}},
+            {type:"section",text:{type:"mrkdwn",text:$b}},
+            {type:"context",elements:[{type:"mrkdwn",text:("<"+$run+"|View full scan results>")}]}]}' > slack.json
+          # --fail-with-body: curl returns 0 even when Slack rejects the payload.
+          curl -sS --fail-with-body -X POST -H 'Content-type: application/json' --data @slack.json "${WEBHOOK}"
 
       - name: Summary
         run: |
