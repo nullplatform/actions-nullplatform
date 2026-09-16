@@ -78,12 +78,12 @@ jobs:
         if: env.DRY_RUN != 'true'
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
-          WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
+          WEBHOOK: ${{ secrets.SLACK_SECURITY_WEBHOOK }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
           if [ -z "${WEBHOOK}" ]; then
-            echo "::warning::SLACK_WEBHOOK_URL is not configured: skipping the Slack report"
+            echo "::warning::SLACK_SECURITY_WEBHOOK is not configured: skipping the Slack report"
             exit 0
           fi
           since=$(date -u -d '3 hours ago' +%Y-%m-%dT%H:%M:%SZ)
