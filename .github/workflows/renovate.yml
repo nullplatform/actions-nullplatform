@@ -10,7 +10,7 @@ name: renovate
 # Dockerfile, and Renovate is the tool that already does that reliably.
 #
 # The policy - which ARG maps to which upstream, how far a bump may go - lives in
-# renovate-config.js. The repos it touches are the ones the np-vuln-bump App is
+# renovate-config.js. The repos it touches are the ones the Renovate App is
 # installed on. Merging a PR triggers release-please, which republishes the
 # image to ECR; the weekly ecr-security-scan then reports what is still open.
 
@@ -45,10 +45,10 @@ jobs:
       # than run Renovate with a token that cannot write anywhere.
       - name: Is the App configured?
         env:
-          APP_ID: ${{ secrets.VULN_BUMP_APP_ID }}
+          APP_ID: ${{ secrets.RENOVATE_APP_ID }}
         run: |
           if [ -z "${APP_ID}" ]; then
-            echo "::error::VULN_BUMP_APP_ID is not configured. Renovate needs the np-vuln-bump App token."
+            echo "::error::RENOVATE_APP_ID is not configured. Renovate needs the Renovate App token."
             exit 1
           fi
 
@@ -56,8 +56,8 @@ jobs:
         id: app
         uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ secrets.VULN_BUMP_APP_ID }}
-          private-key: ${{ secrets.VULN_BUMP_PRIVATE_KEY }}
+          app-id: ${{ secrets.RENOVATE_APP_ID }}
+          private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
           owner: nullplatform
 
       - name: Renovate
@@ -78,12 +78,12 @@ jobs:
         if: env.DRY_RUN != 'true'
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
-          WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
+          WEBHOOK: ${{ secrets.SLACK_SECURITY_WEBHOOK }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
           if [ -z "${WEBHOOK}" ]; then
-            echo "::warning::SLACK_WEBHOOK_URL is not configured: skipping the Slack report"
+            echo "::warning::SLACK_SECURITY_WEBHOOK is not configured: skipping the Slack report"
             exit 0
           fi
           since=$(date -u -d '3 hours ago' +%Y-%m-%dT%H:%M:%SZ)
