@@ -1,5 +1,5 @@
 // Self-hosted Renovate config. Runs from .github/workflows/renovate.yml with the
-// Renovate App token: the repos it processes are exactly the ones the App is
+// renovate-app-nullplatform App token: the repos it processes are exactly the ones the App is
 // installed on, so the App installation is both the scope and the write boundary.
 //
 // Why Renovate and not the in-house resolver it replaces: that resolver hardcoded
@@ -40,13 +40,23 @@ module.exports = {
 
   // The workflow cron is the scheduler; Renovate itself must not add a second gate.
   schedule: ['at any time'],
-  dryRun: process.env.DRY_RUN === 'true' ? 'full' : null,
+  // dryRun is driven by the RENOVATE_DRY_RUN env var set in the workflow, not here:
+  // one source of truth, and it is the only form the action forwards into the container.
+
+  // The App deliberately has no "vulnerability alerts" permission, and this run does
+  // not use Dependabot alerts to decide anything. Without this Renovate warns on every repo.
+  vulnerabilityAlerts: { enabled: false },
 
   automerge: false,
   prConcurrentLimit: 10,
   prHourlyLimit: 0,
   labels: ['dependencies', 'security'],
-  branchPrefix: 'renovate/',
+  // The org's branch-validation check only accepts conventional-commit prefixes
+  // (feat|fix|chore|...). A "renovate/" branch fails it before anyone reads the PR.
+  // branchPrefixOld lets Renovate migrate the branch it already opened under the
+  // old prefix instead of abandoning that PR and opening a duplicate.
+  branchPrefix: 'fix/renovate-',
+  branchPrefixOld: 'renovate/',
 
   // fix(deps): is what release-please needs to cut a patch and republish the image.
   semanticCommits: 'enabled',

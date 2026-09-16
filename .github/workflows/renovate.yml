@@ -1,6 +1,6 @@
 name: renovate
 
-# Weekly bumps for the third-party binaries pinned in Dockerfiles (tofu, helm,
+# Biweekly bumps for the third-party binaries pinned in Dockerfiles (tofu, helm,
 # kubectl, and any version written into a GitHub release URL).
 #
 # Dependabot cannot see these - its docker ecosystem reads FROM lines, not
@@ -16,7 +16,11 @@ name: renovate
 
 on:
   schedule:
-    - cron: '45 12 * * 1'      # Mondays 09:45 ART
+    # Days 2 and 16, 09:45 ART. The base image (worker-bridge) is rebuilt on the
+    # 1st and 15th; Dependabot runs daily and opens the FROM bump the same day.
+    # Running the day after keeps the agreed order: base first, pinned binaries
+    # second - and matches the biweekly cadence decided with security.
+    - cron: '45 12 2,16 * *'
   workflow_dispatch:
     inputs:
       dry_run:
@@ -34,6 +38,11 @@ concurrency:
 env:
   # The cron always opens PRs; dry-run is only for the manual dispatch.
   DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+  # Renovate runs inside a container, and renovatebot/github-action only forwards
+  # env vars matching ^RENOVATE_\w+ (plus LOG_LEVEL and a few proxy vars). The
+  # first dry-run was silently a real run because DRY_RUN never got in. Renovate
+  # reads RENOVATE_DRY_RUN natively: "full" = log everything, change nothing.
+  RENOVATE_DRY_RUN: ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) && 'full' || '' }}
 
 jobs:
   renovate:
@@ -48,7 +57,7 @@ jobs:
           APP_ID: ${{ secrets.RENOVATE_APP_ID }}
         run: |
           if [ -z "${APP_ID}" ]; then
-            echo "::error::RENOVATE_APP_ID is not configured. Renovate needs the Renovate App token."
+            echo "::error::RENOVATE_APP_ID is not configured. Renovate needs the renovate-app-nullplatform App token."
             exit 1
           fi
 
@@ -68,7 +77,7 @@ jobs:
           renovate-version: 44.93.4
         env:
           LOG_LEVEL: info
-          DRY_RUN: ${{ env.DRY_RUN }}
+          RENOVATE_DRY_RUN: ${{ env.RENOVATE_DRY_RUN }}
 
       # Renovate has no Slack integration of its own. This lists the PRs it opened
       # in this run and posts them - and it posts even when the count is zero. A
