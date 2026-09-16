@@ -1,5 +1,5 @@
 // Self-hosted Renovate config. Runs from .github/workflows/renovate.yml with the
-// np-vuln-bump App token: the repos it processes are exactly the ones the App is
+// Renovate App token: the repos it processes are exactly the ones the App is
 // installed on, so the App installation is both the scope and the write boundary.
 //
 // Why Renovate and not the in-house resolver it replaces: that resolver hardcoded
