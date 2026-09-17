@@ -36,7 +36,12 @@ module.exports = {
   // Only the managers below. No npm, no go.mod, no docker FROM: those layers are
   // owned elsewhere (Dependabot / the base-image work), and this must never open
   // a PR nobody asked for.
-  enabledManagers: ['custom.regex'],
+  // No dockerfile manager: the FROM line belongs to the base-image owner, who bumps it with Dependabot
+  // (package-ecosystem: docker, label base-image). Two bots on one line means two PRs for one change.
+  enabledManagers: ['custom.regex', 'gomod', 'npm', 'github-actions'],
+  postUpdateOptions: ['gomodTidy'],
+  // Nobody watches these repos and there is no CODEOWNERS: without this a PR notifies no one.
+  reviewers: ['gdrojas'],
 
   // The workflow cron is the scheduler; Renovate itself must not add a second gate.
   schedule: ['at any time'],
@@ -46,6 +51,8 @@ module.exports = {
   // The App deliberately has no "vulnerability alerts" permission, and this run does
   // not use Dependabot alerts to decide anything. Without this Renovate warns on every repo.
   vulnerabilityAlerts: { enabled: false },
+  // OSV knows the CVEs of gomod/npm deps: those updates are raised immediately and labelled as security.
+  osvVulnerabilityAlerts: true,
 
   automerge: false,
   prConcurrentLimit: 10,
@@ -64,6 +71,30 @@ module.exports = {
   semanticCommitScope: 'deps',
 
   customManagers: [
+    // Renovate keeps its own version current: the action pulls ghcr.io/renovatebot/renovate:<renovate-version>.
+    { customType: 'regex', managerFilePatterns: ['/^\\.github/workflows/renovate\\.ya?ml$/'],
+      matchStrings: ['renovate-version:\\s*(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)'],
+      depNameTemplate: 'ghcr.io/renovatebot/renovate', datasourceTemplate: 'docker', versioningTemplate: 'docker' },
+    // np is installed from its CDN; releases on GitHub are stale, tags are current.
+    { customType: 'regex', managerFilePatterns: DOCKERFILES,
+      matchStrings: ['ARG NP_VERSION=v?(?<currentValue>[0-9][0-9.]*)'],
+      depNameTemplate: 'nullplatform/cli', datasourceTemplate: 'github-tags', extractVersionTemplate: '^v?(?<version>.*)$' },
+    // Go toolchain that compiles the CDN binaries (np, np-agent): stdlib CVEs live here.
+    { customType: 'regex', managerFilePatterns: ['/^\\.github/workflows/.+\\.ya?ml$/'],
+      matchStrings: ['go-version:\\s*[\'"]?(?<currentValue>1\\.[0-9.]+)[\'"]?'],
+      depNameTemplate: 'go', datasourceTemplate: 'golang-version' },
+    // np-nginx takes the tag of the shared base (worker-bridge) from main-config.json, not from the Dockerfile.
+    { customType: 'regex', managerFilePatterns: ['/(^|/)main-config\\.json$/'],
+      matchStrings: ['"base_version":\\s*"(?<currentValue>[0-9][0-9.]*)"'],
+      depNameTemplate: 'public.ecr.aws/nullplatform/scopes/worker-bridge', datasourceTemplate: 'docker', versioningTemplate: 'docker' },
+    // fluent-bit on the customer AMI: install.sh honours FLUENT_BIT_RELEASE_VERSION; releases are tagged vX.Y.Z.
+    { customType: 'regex', managerFilePatterns: ['/(^|/)main-config\\.json$/'],
+      matchStrings: ['"binary_version":\\s*"(?<currentValue>[0-9][0-9.]*)"'],
+      depNameTemplate: 'fluent/fluent-bit', datasourceTemplate: 'github-releases', extractVersionTemplate: '^v?(?<version>.*)$' },
+    // cloudwatch.so is copied out of aws-for-fluent-bit at this tag.
+    { customType: 'regex', managerFilePatterns: ['/(^|/)main-config\\.json$/'],
+      matchStrings: ['"cloudwatch_plugin_image":\\s*"(?<currentValue>[0-9][0-9.]*)"'],
+      depNameTemplate: 'public.ecr.aws/aws-observability/aws-for-fluent-bit', datasourceTemplate: 'docker', versioningTemplate: 'docker' },
     arg('TOFU', 'opentofu/opentofu'),
     arg('HELM', 'helm/helm'),
     arg('KUBECTL', 'kubernetes/kubernetes'),
@@ -82,6 +113,14 @@ module.exports = {
   ],
 
   packageRules: [
+    // github-actions: only in this repo for now (the renovate action SHA and the reusables' own uses:).
+    { matchManagers: ['github-actions'], enabled: false },
+    { matchManagers: ['github-actions'], matchRepositories: ['nullplatform/actions-nullplatform'], enabled: true, groupName: 'github actions' },
+    { matchDepNames: ['ghcr.io/renovatebot/renovate', 'renovatebot/github-action'], groupName: 'renovate' },
+    { matchManagers: ['gomod'], groupName: 'go modules' },
+    { matchManagers: ['npm'], groupName: 'npm packages' },
+    // Already covered by Dependabot there.
+    { matchManagers: ['npm'], matchRepositories: ['nullplatform/platform-feature-flag'], enabled: false },
     // One PR per repo with every pin in it: scopes declares three in the same
     // Dockerfile, and three PRs against one file would conflict with each other.
     { matchManagers: ['custom.regex'], groupName: 'pinned binaries' },
