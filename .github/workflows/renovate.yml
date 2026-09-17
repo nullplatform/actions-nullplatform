@@ -37,7 +37,6 @@ concurrency:
 
 env:
   # The cron always opens PRs; dry-run is only for the manual dispatch.
-  DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
   # Renovate runs inside a container, and renovatebot/github-action only forwards
   # env vars matching ^RENOVATE_\w+ (plus LOG_LEVEL and a few proxy vars). The
   # first dry-run was silently a real run because DRY_RUN never got in. Renovate
@@ -78,39 +77,3 @@ jobs:
         env:
           LOG_LEVEL: info
           RENOVATE_DRY_RUN: ${{ env.RENOVATE_DRY_RUN }}
-
-      # Renovate has no Slack integration of its own. This lists the PRs it opened
-      # in this run and posts them - and it posts even when the count is zero. A
-      # report that only speaks when it has something to say is indistinguishable
-      # from a dead one; that is how the image scan sat broken for four months.
-      - name: Notify Slack
-        if: env.DRY_RUN != 'true'
-        env:
-          GH_TOKEN: ${{ steps.app.outputs.token }}
-          WEBHOOK: ${{ secrets.SLACK_SECURITY_WEBHOOK }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          set -euo pipefail
-          if [ -z "${WEBHOOK}" ]; then
-            echo "::warning::SLACK_SECURITY_WEBHOOK is not configured: skipping the Slack report"
-            exit 0
-          fi
-          since=$(date -u -d '3 hours ago' +%Y-%m-%dT%H:%M:%SZ)
-          gh search prs --owner nullplatform --label security --state open \
-            --created ">=${since}" --limit 50 \
-            --json url,title,repository > prs.json
-          count=$(jq 'length' prs.json)
-          jq -n --arg n "$count" --arg run "$RUN_URL" --slurpfile prs prs.json '
-            {blocks: (
-              [{type:"header", text:{type:"plain_text", text:("Pinned binaries - " + $n + " PR(s) opened this week"), emoji:true}}]
-              + (if ($prs[0]|length) > 0 then
-                  [{type:"section", text:{type:"mrkdwn", text:
-                    ($prs[0] | map("• `" + .repository.name + "` - <" + .url + "|" + .title + ">") | join("\n"))}}]
-                 else
-                  [{type:"section", text:{type:"mrkdwn", text:"Nothing to bump. Every pinned binary is at the highest version its ceiling allows."}}]
-                 end)
-              + [{type:"context", elements:[{type:"mrkdwn", text:("<" + $run + "|View the run>")}]}]
-            )}' > slack.json
-          # --fail-with-body: curl returns 0 even when Slack rejects the payload.
-          curl -sS --fail-with-body -X POST -H 'Content-type: application/json' \
-            --data @slack.json "${WEBHOOK}"

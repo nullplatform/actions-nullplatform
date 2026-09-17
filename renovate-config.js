@@ -49,6 +49,8 @@ module.exports = {
   // The App deliberately has no "vulnerability alerts" permission, and this run does
   // not use Dependabot alerts to decide anything. Without this Renovate warns on every repo.
   vulnerabilityAlerts: { enabled: false },
+  // OSV knows the CVEs of gomod/npm deps: those updates are raised immediately and labelled as security.
+  osvVulnerabilityAlerts: true,
 
   automerge: false,
   prConcurrentLimit: 10,
