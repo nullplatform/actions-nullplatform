@@ -1,0 +1,84 @@
+name: bot-prs-digest
+
+# One Slack message, weekdays at 09:45 AR, listing every bot PR still waiting for a
+# merge across the org: Dependabot (base image FROM), Renovate (pinned binaries, Go,
+# npm, actions) and release-please release PRs. Nobody watches 40 repos; this is the
+# list the person who merges works from. Silent when there is nothing to merge.
+
+on:
+  schedule:
+    - cron: '45 12 * * 1-5'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # Only repos that publish an image. Org-wide, Dependabot alone has 150 open npm PRs in unrelated repos.
+  IMAGE_REPOS: '^(services-.*|scopes(-.*)?|scope-testing|plugin-base-worker|k8s-tools|customers-aws-image|cli|controlplane-agent|performance-prometheus|traffic-kong-gateway-base-image|actions-nullplatform)$'
+
+concurrency:
+  group: bot-prs-digest
+  cancel-in-progress: false
+
+jobs:
+  digest:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Are the secrets configured?
+        env:
+          WEBHOOK: ${{ secrets.SLACK_SECURITY_WEBHOOK }}
+          APP_ID: ${{ secrets.RENOVATE_APP_ID }}
+        run: |
+          [ -n "${WEBHOOK}" ] || { echo "::error::SLACK_SECURITY_WEBHOOK is not configured in this repo"; exit 1; }
+          [ -n "${APP_ID}" ] || { echo "::error::RENOVATE_APP_ID is not available: private repos would be invisible to the search"; exit 1; }
+
+      # The Renovate App is installed on every repo with an image: its token sees the private ones too.
+      - name: App token
+        id: app
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.RENOVATE_APP_ID }}
+          private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
+      - name: Collect open bot PRs
+        id: collect
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          search() { gh search prs --owner "${OWNER}" --state open --author "$1" --limit 200 \
+                       --json number,title,url,repository,createdAt --jq '.[] | . + {bot: "'"$2"'"}'; }
+          {
+            search app/dependabot                 Dependabot
+            search app/renovate-app-nullplatform  Renovate
+            search app/github-actions             release-please | jq -c 'select(.title | startswith("chore(main): release"))'
+          } | jq -s --arg re "${IMAGE_REPOS}" 'map(select(.repository.name | test($re))) | sort_by(.repository.name, .createdAt)' > prs.json
+          echo "count=$(jq length prs.json)" >> "$GITHUB_OUTPUT"
+          jq -r '.[] | "  \(.repository.name)#\(.number) [\(.bot)] \(.title)"' prs.json
+
+      - name: Post to Slack
+        if: steps.collect.outputs.count != '0'
+        env:
+          WEBHOOK: ${{ secrets.SLACK_SECURITY_WEBHOOK }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          # One section per repo (Slack caps a section at 3000 chars and a message at 50 blocks).
+          jq -n --arg run "$RUN_URL" --slurpfile prs prs.json '
+            ($prs[0]) as $all
+            | ($all | group_by(.repository.name) | map({type:"section", text:{type:"mrkdwn", text:
+                ("*" + .[0].repository.name + "*\n" +
+                 (map("• <" + .url + "|#" + (.number|tostring) + "> " + .bot + " · " + (.title|.[0:90])
+                       + " · " + (((now - (.createdAt | fromdateiso8601)) / 86400 | floor | tostring) + "d"))
+                  | join("\n")) | .[0:2900])}})) as $groups
+            | {blocks: (
+                [{type:"header", text:{type:"plain_text", text:("Bot PRs waiting for merge: " + ($all|length|tostring)), emoji:true}}]
+                + ($groups | .[0:45])
+                + (if ($groups|length) > 45 then [{type:"section", text:{type:"mrkdwn", text:("… and " + (($groups|length) - 45 | tostring) + " more repos")}}] else [] end)
+                + [{type:"context", elements:[{type:"mrkdwn", text:("Dependabot moves the base image, Renovate the pinned binaries/Go/npm, release-please cuts the release. Merge and the image ships. <" + $run + "|run>")}]}]
+              )}' > slack.json
+          # --fail-with-body: curl returns 0 even when Slack rejects the payload.
+          curl -sS --fail-with-body -X POST -H 'Content-type: application/json' --data @slack.json "${WEBHOOK}"
