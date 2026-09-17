@@ -1,21 +1,27 @@
 name: bot-prs-digest
 
-# One Slack message, weekdays at 09:45 AR, listing every bot PR still waiting for a
-# merge across the org: Dependabot (base image FROM), Renovate (pinned binaries, Go,
+# One Slack message per cycle, on the 3rd and 17th (base image rebuilt on the 1st/15th,
+# Renovate on the 2nd/16th), listing every bot PR still waiting for a merge across the org: Dependabot (base image FROM), Renovate (pinned binaries, Go,
 # npm, actions) and release-please release PRs. Nobody watches 40 repos; this is the
 # list the person who merges works from. Silent when there is nothing to merge.
 
 on:
   schedule:
-    - cron: '45 12 * * 1-5'
+    - cron: '45 12 3,17 * *'
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Build the message and print it instead of posting it
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 env:
   # Only repos that publish an image. Org-wide, Dependabot alone has 150 open npm PRs in unrelated repos.
-  IMAGE_REPOS: '^(services-.*|scopes(-.*)?|scope-testing|plugin-base-worker|k8s-tools|customers-aws-image|cli|controlplane-agent|performance-prometheus|traffic-kong-gateway-base-image|actions-nullplatform)$'
+  # services-valkey is not in the public registry on purpose: out of this flow.
+  IMAGE_REPOS: '^(services-(?!valkey$).*|scopes(-.*)?|scope-testing|plugin-base-worker|k8s-tools|customers-aws-image|cli|controlplane-agent|performance-prometheus|traffic-kong-gateway-base-image|actions-nullplatform)$'
 
 concurrency:
   group: bot-prs-digest
@@ -27,10 +33,10 @@ jobs:
     steps:
       - name: Are the secrets configured?
         env:
-          WEBHOOK: ${{ secrets.SLACK_SECURITY_WEBHOOK }}
+          WEBHOOK: ${{ secrets.SLACK_SECURITY_URL }}
           APP_ID: ${{ secrets.RENOVATE_APP_ID }}
         run: |
-          [ -n "${WEBHOOK}" ] || { echo "::error::SLACK_SECURITY_WEBHOOK is not configured in this repo"; exit 1; }
+          [ -n "${WEBHOOK}" ] || { echo "::error::SLACK_SECURITY_URL is not configured in this repo"; exit 1; }
           [ -n "${APP_ID}" ] || { echo "::error::RENOVATE_APP_ID is not available: private repos would be invisible to the search"; exit 1; }
 
       # The Renovate App is installed on every repo with an image: its token sees the private ones too.
@@ -62,7 +68,8 @@ jobs:
       - name: Post to Slack
         if: steps.collect.outputs.count != '0'
         env:
-          WEBHOOK: ${{ secrets.SLACK_SECURITY_WEBHOOK }}
+          WEBHOOK: ${{ secrets.SLACK_SECURITY_URL }}
+          DRY_RUN: ${{ inputs.dry_run }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
@@ -80,5 +87,6 @@ jobs:
                 + (if ($groups|length) > 45 then [{type:"section", text:{type:"mrkdwn", text:("… and " + (($groups|length) - 45 | tostring) + " more repos")}}] else [] end)
                 + [{type:"context", elements:[{type:"mrkdwn", text:("Dependabot moves the base image, Renovate the pinned binaries/Go/npm, release-please cuts the release. Merge and the image ships. <" + $run + "|run>")}]}]
               )}' > slack.json
+          if [ "${DRY_RUN}" = "true" ]; then echo "DRY RUN - would post:"; jq -r '.blocks[] | .text.text // .elements[0].text' slack.json; exit 0; fi
           # --fail-with-body: curl returns 0 even when Slack rejects the payload.
           curl -sS --fail-with-body -X POST -H 'Content-type: application/json' --data @slack.json "${WEBHOOK}"
