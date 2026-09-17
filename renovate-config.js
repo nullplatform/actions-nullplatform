@@ -39,7 +39,7 @@ module.exports = {
   enabledManagers: ['custom.regex', 'dockerfile', 'gomod', 'npm', 'github-actions'],
   postUpdateOptions: ['gomodTidy'],
   // Nobody watches these repos and there is no CODEOWNERS: without this a PR notifies no one.
-  reviewers: ['team:implementations'],
+  reviewers: ['gdrojas'],
 
   // The workflow cron is the scheduler; Renovate itself must not add a second gate.
   schedule: ['at any time'],
