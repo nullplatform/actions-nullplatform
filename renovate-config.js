@@ -36,7 +36,9 @@ module.exports = {
   // Only the managers below. No npm, no go.mod, no docker FROM: those layers are
   // owned elsewhere (Dependabot / the base-image work), and this must never open
   // a PR nobody asked for.
-  enabledManagers: ['custom.regex', 'dockerfile', 'gomod', 'npm', 'github-actions'],
+  // No dockerfile manager: the FROM line belongs to the base-image owner, who bumps it with Dependabot
+  // (package-ecosystem: docker, label base-image). Two bots on one line means two PRs for one change.
+  enabledManagers: ['custom.regex', 'gomod', 'npm', 'github-actions'],
   postUpdateOptions: ['gomodTidy'],
   // Nobody watches these repos and there is no CODEOWNERS: without this a PR notifies no one.
   reviewers: ['gdrojas'],
@@ -111,10 +113,6 @@ module.exports = {
   ],
 
   packageRules: [
-    { matchManagers: ['dockerfile'], groupName: 'base images' },
-    // Only our own registry: every image builds FROM the base published by the base-image
-    // pipeline, so upstream tags (alpine, nginx, node...) are pinned in exactly one place.
-    { matchManagers: ['dockerfile'], matchPackageNames: ['!public.ecr.aws/nullplatform/**'], enabled: false },
     // github-actions: only in this repo for now (the renovate action SHA and the reusables' own uses:).
     { matchManagers: ['github-actions'], enabled: false },
     { matchManagers: ['github-actions'], matchRepositories: ['nullplatform/actions-nullplatform'], enabled: true, groupName: 'github actions' },
