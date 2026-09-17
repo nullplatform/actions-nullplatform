@@ -1,0 +1,19 @@
+name: auto-merge-self
+
+# Merges this repo's own release-please PR when "Release Self" finishes. Named
+# auto-merge-self because auto-merge-release.yml here is the reusable itself.
+on:
+  workflow_run:
+    workflows: ["Release Self"]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  automerge:
+    uses: ./.github/workflows/auto-merge-release.yml
+    secrets:
+      app-id: ${{ secrets.APP_RELEASE_ID }}
+      app-private-key: ${{ secrets.APP_RELEASE_PRIVATE_KEY }}

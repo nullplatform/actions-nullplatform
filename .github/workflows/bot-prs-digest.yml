@@ -20,8 +20,7 @@ permissions:
 
 env:
   # Only repos that publish an image. Org-wide, Dependabot alone has 150 open npm PRs in unrelated repos.
-  # services-valkey is not in the public registry on purpose: out of this flow.
-  IMAGE_REPOS: '^(services-(?!valkey$).*|scopes(-.*)?|scope-testing|plugin-base-worker|k8s-tools|customers-aws-image|cli|controlplane-agent|performance-prometheus|traffic-kong-gateway-base-image|actions-nullplatform)$'
+  IMAGE_REPOS: '^(services-.*|scopes(-.*)?|scope-testing|plugin-base-worker|k8s-tools|customers-aws-image|cli|controlplane-agent|performance-prometheus|traffic-kong-gateway-base-image|actions-nullplatform)$'
 
 concurrency:
   group: bot-prs-digest
