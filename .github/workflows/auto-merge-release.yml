@@ -20,11 +20,10 @@ on:
         default: 'merge'
       pr_number:
         description: >-
-          Explicit PR number to merge. Set this when calling from a workflow_run
-          (or other non-pull_request) trigger, where github.event.pull_request
-          isn't available — the caller is then responsible for resolving the PR
-          and checking its author/label itself. Leave at 0 for pull_request-
-          triggered callers, which fall back to github.event.pull_request.
+          Explicit PR number to merge. Optional: on a workflow_run trigger this
+          workflow resolves the open release PR itself (branch
+          release-please--branches--main, expected author and label). Leave at 0
+          unless the caller wants to force a specific PR.
         required: false
         type: number
         default: 0
@@ -41,13 +40,53 @@ permissions:
   pull-requests: write
 
 jobs:
+  resolve:
+    name: Resolve release PR
+    runs-on: ubuntu-24.04
+    outputs:
+      pr_number: ${{ steps.find.outputs.pr_number }}
+    steps:
+      - name: Find the release PR
+        id: find
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          FORCED: ${{ inputs.pr_number }}
+          AUTHOR: ${{ inputs.release_pr_author }}
+          LABEL: ${{ inputs.release_pr_label }}
+          RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: |
+          set -euo pipefail
+          if [ "${FORCED}" != "0" ]; then echo "pr_number=${FORCED}" >> "$GITHUB_OUTPUT"; exit 0; fi
+          case "${EVENT}" in
+            workflow_run)
+              # The release workflow just finished: if it left a release PR open, that is the one to merge.
+              if [ "${RUN_CONCLUSION}" != "success" ]; then echo "release workflow concluded ${RUN_CONCLUSION}; nothing to merge"; echo "pr_number=" >> "$GITHUB_OUTPUT"; exit 0; fi
+              PR=$(gh api "repos/${GITHUB_REPOSITORY}/pulls" -X GET -f state=open -f "head=${GITHUB_REPOSITORY_OWNER}:release-please--branches--main" \
+                    | jq -r --arg a "${AUTHOR}" --arg l "${LABEL}" '[.[] | select(.user.login == $a and ([.labels[].name] | index($l)))] | .[0].number // empty')
+              if [ -n "${PR}" ]; then echo "release PR #${PR}"; else echo "no open release PR by ${AUTHOR} with label '${LABEL}'"; fi
+              echo "pr_number=${PR}" >> "$GITHUB_OUTPUT" ;;
+            pull_request)
+              if [ "${PR_AUTHOR}" = "github-actions[bot]" ]; then
+                # Since 2026-06 GitHub holds pull_request runs of PRs opened by github-actions[bot] for manual approval:
+                # this path only ever runs after someone clicked "Approve and run". Callers must use on: workflow_run.
+                echo "::error::triggered by pull_request on a PR opened by github-actions[bot]: GitHub gates that trigger since 2026-06 and it never runs unattended. Call this workflow from 'on: workflow_run: workflows: [<your release workflow>]' instead."
+                exit 1
+              fi
+              if [ "${PR_AUTHOR}" = "${AUTHOR}" ] && printf '%s' ",${PR_LABELS}," | grep -q ",${LABEL},"; then echo "pr_number=${PR_NUMBER}" >> "$GITHUB_OUTPUT"; else echo "not a release PR; skipping"; echo "pr_number=" >> "$GITHUB_OUTPUT"; fi ;;
+            *) echo "unsupported trigger ${EVENT}"; echo "pr_number=" >> "$GITHUB_OUTPUT" ;;
+          esac
   automerge:
     name: Auto-merge release PR
-    if: |
-      inputs.pr_number != 0 ||
-      (github.event.pull_request.user.login == inputs.release_pr_author &&
-       contains(github.event.pull_request.labels.*.name, inputs.release_pr_label))
+    needs: resolve
+    if: needs.resolve.outputs.pr_number != ''
     runs-on: ubuntu-24.04
+    concurrency:
+      group: auto-merge-release-${{ github.repository }}
+      cancel-in-progress: false
     steps:
       # A merge done with the default GITHUB_TOKEN would not trigger the
       # push-triggered release workflow on main (GitHub's Actions loop
@@ -63,7 +102,7 @@ jobs:
       - name: Wait for other checks to pass
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          PR_NUMBER: ${{ inputs.pr_number != 0 && inputs.pr_number || github.event.pull_request.number }}
+          PR_NUMBER: ${{ needs.resolve.outputs.pr_number }}
           RUN_ID: ${{ github.run_id }}
         run: |
           # gh pr checks --watch would include this very job's own check run,
@@ -145,7 +184,7 @@ jobs:
       - name: Merge release PR
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          PR_NUMBER: ${{ inputs.pr_number != 0 && inputs.pr_number || github.event.pull_request.number }}
+          PR_NUMBER: ${{ needs.resolve.outputs.pr_number }}
           MERGE_METHOD: ${{ inputs.merge_method }}
         # --admin: the App token still hits "base branch policy prohibits the
         # merge" (required review/status-check rules) without it, even though
