@@ -76,3 +76,6 @@ jobs:
     secrets:
       aws_role_arn: ${{ secrets.AWS_ROLE_ARN_ECR_READ }}
       slack_webhook_url: ${{ secrets.SLACK_SECURITY_WEBHOOK }}
+      # Same App Renovate uses: it is installed on the image repos, so it can list their open PRs.
+      app_id: ${{ secrets.RENOVATE_APP_ID }}
+      app_private_key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}

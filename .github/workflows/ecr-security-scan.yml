@@ -44,6 +44,11 @@ on:
       slack_webhook_url:
         description: 'Slack webhook URL for vulnerability alerts'
         required: true
+      app_id:
+        description: GitHub App used only to list open fix PRs in private image repos. Optional; public repos work with the default token.
+        required: false
+      app_private_key:
+        required: false
 
 permissions:
   id-token: write
@@ -57,6 +62,7 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      APP_ID: ${{ secrets.app_id }}
 
     steps:
       - name: Configure AWS credentials
@@ -83,6 +89,23 @@ jobs:
           sudo mv trivy /usr/local/bin/trivy
           trivy --version
 
+      - name: App token for PR lookup
+        id: pr_token
+        if: env.APP_ID != ''
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.app_id }}
+          private-key: ${{ secrets.app_private_key }}
+          owner: ${{ github.repository_owner }}
+
+      - name: Image to source-repo map
+        id: repo_map
+        run: |
+          # Label org.opencontainers.image.source wins; this map covers images that do not carry it.
+          MAP=$(curl -fsSL https://raw.githubusercontent.com/nullplatform/actions-nullplatform/main/.github/ecr-image-repos.json 2>/dev/null || echo '{}')
+          echo "$MAP" | jq -e . >/dev/null 2>&1 || MAP='{}'
+          echo "map=$(echo "$MAP" | jq -c .)" >> "$GITHUB_OUTPUT"
+
       - name: Get latest tags and scan images
         id: scan
         env:
@@ -90,6 +113,8 @@ jobs:
           REGISTRY: ${{ inputs.ecr_registry }}
           SEVERITY: ${{ inputs.severity }}
           UPLOAD_SARIF: ${{ inputs.upload_sarif }}
+          GH_TOKEN: ${{ steps.pr_token.outputs.token || github.token }}
+          REPO_MAP: ${{ steps.repo_map.outputs.map }}
         run: |
           VULNERABILITIES_FOUND=false
           REPORT=""
@@ -154,7 +179,17 @@ jobs:
 
             if [ "$CRITICAL" -gt 0 ] || [ "$HIGH" -gt 0 ]; then
               VULNERABILITIES_FOUND=true
-              REPORT="${REPORT}\n*${IMAGE_NAME}:${LATEST_TAG}*: ${CRITICAL} critical, ${HIGH} high"
+              # The line is an action, not a CVE list: a fixable finding still published after Renovate ran means a PR to merge, a rebuild, or a decision.
+              SRC=$(echo "$RESULT" | jq -r '.Metadata.ImageConfig.config.Labels["org.opencontainers.image.source"] // empty' | sed -E 's#^https://github\.com/[^/]+/([^/]+).*$#\1#')
+              [ -z "${SRC}" ] && SRC=$(echo "${REPO_MAP}" | jq -r --arg i "${IMAGE_NAME}" '.[$i] // empty')
+              if [ -z "${SRC}" ]; then
+                ACTION="source repo unknown, add it to ecr-image-repos.json"
+              elif PRS=$(gh pr list -R "${GITHUB_REPOSITORY_OWNER}/${SRC}" --state open --label dependencies --json number,url --jq '[.[] | "<\(.url)|#\(.number)>"] | join(" ")' 2>/dev/null); then
+                if [ -n "${PRS}" ]; then ACTION="${SRC}: merge ${PRS}"; else ACTION="${SRC}: no open fix PR, rebuild on the current base or decide"; fi
+              else
+                ACTION="${SRC}: could not list PRs (private repo, pass app_id/app_private_key)"
+              fi
+              REPORT="${REPORT}\n*${IMAGE_NAME}:${LATEST_TAG}*: ${CRITICAL} critical, ${HIGH} high -> ${ACTION}"
             fi
 
             echo "  Critical: ${CRITICAL}, High: ${HIGH}"
@@ -171,7 +206,7 @@ jobs:
           if [ -n "${STALE}" ]; then VULNERABILITIES_FOUND=true; fi
 
           # Save report for Slack (escape newlines for JSON)
-          REPORT_ESCAPED=$(echo -e "$REPORT" | sed 's/"/\\"/g' | tr '\n' '|' | sed 's/|/\\n/g')
+          REPORT_ESCAPED=$(echo -e "$REPORT" | sed 's/"/\\"/g' | tr '\n' '\001' | sed 's/\x01/\\n/g')
           echo "report=${REPORT_ESCAPED}" >> "$GITHUB_OUTPUT"
 
       - name: Upload SARIF to GitHub Security tab
@@ -201,8 +236,8 @@ jobs:
           # Undo that and let jq do the escaping: hand-escaping is how a report ends up unsent.
           REPORT_TXT=$(printf '%b' "${REPORT}" | sed 's/\\"/"/g')
           if [ "${FOUND}" = "true" ]; then
-            HEADLINE="Image scan: findings in the public registry"
-            BODY="Scanned ${SCANNED}/${TOTAL} images. CRITICAL/HIGH with a fix, not scannable, or stopped versioning:${REPORT_TXT}"
+            HEADLINE="Image scan: actions pending"
+            BODY="Scanned ${SCANNED}/${TOTAL} images. Still published with a fixable CRITICAL/HIGH after Renovate and the base rebuild, or out of the automation's reach:${REPORT_TXT}"
           else
             HEADLINE="Image scan: ${SCANNED}/${TOTAL} images clean"
             BODY="No fixable CRITICAL or HIGH findings. This message is the heartbeat: if it stops arriving, the scan is broken."
