@@ -36,7 +36,10 @@ module.exports = {
   // Only the managers below. No npm, no go.mod, no docker FROM: those layers are
   // owned elsewhere (Dependabot / the base-image work), and this must never open
   // a PR nobody asked for.
-  enabledManagers: ['custom.regex'],
+  enabledManagers: ['custom.regex', 'dockerfile', 'gomod', 'npm'],
+  postUpdateOptions: ['gomodTidy'],
+  // Nobody watches these repos and there is no CODEOWNERS: without this a PR notifies no one.
+  reviewers: ['team:implementations'],
 
   // The workflow cron is the scheduler; Renovate itself must not add a second gate.
   schedule: ['at any time'],
@@ -64,6 +67,26 @@ module.exports = {
   semanticCommitScope: 'deps',
 
   customManagers: [
+    // np is installed from its CDN; releases on GitHub are stale, tags are current.
+    { customType: 'regex', managerFilePatterns: DOCKERFILES,
+      matchStrings: ['ARG NP_VERSION=v?(?<currentValue>[0-9][0-9.]*)'],
+      depNameTemplate: 'nullplatform/cli', datasourceTemplate: 'github-tags', extractVersionTemplate: '^v?(?<version>.*)$' },
+    // Go toolchain that compiles the CDN binaries (np, np-agent): stdlib CVEs live here.
+    { customType: 'regex', managerFilePatterns: ['/^\\.github/workflows/.+\\.ya?ml$/'],
+      matchStrings: ['go-version:\\s*[\'"]?(?<currentValue>1\\.[0-9.]+)[\'"]?'],
+      depNameTemplate: 'go', datasourceTemplate: 'golang-version' },
+    // np-nginx takes the tag of the shared base (worker-bridge) from main-config.json, not from the Dockerfile.
+    { customType: 'regex', managerFilePatterns: ['/(^|/)main-config\\.json$/'],
+      matchStrings: ['"base_version":\\s*"(?<currentValue>[0-9][0-9.]*)"'],
+      depNameTemplate: 'public.ecr.aws/nullplatform/scopes/worker-bridge', datasourceTemplate: 'docker', versioningTemplate: 'docker' },
+    // fluent-bit on the customer AMI: install.sh honours FLUENT_BIT_RELEASE_VERSION; releases are tagged vX.Y.Z.
+    { customType: 'regex', managerFilePatterns: ['/(^|/)main-config\\.json$/'],
+      matchStrings: ['"binary_version":\\s*"(?<currentValue>[0-9][0-9.]*)"'],
+      depNameTemplate: 'fluent/fluent-bit', datasourceTemplate: 'github-releases', extractVersionTemplate: '^v?(?<version>.*)$' },
+    // cloudwatch.so is copied out of aws-for-fluent-bit at this tag.
+    { customType: 'regex', managerFilePatterns: ['/(^|/)main-config\\.json$/'],
+      matchStrings: ['"cloudwatch_plugin_image":\\s*"(?<currentValue>[0-9][0-9.]*)"'],
+      depNameTemplate: 'public.ecr.aws/aws-observability/aws-for-fluent-bit', datasourceTemplate: 'docker', versioningTemplate: 'docker' },
     arg('TOFU', 'opentofu/opentofu'),
     arg('HELM', 'helm/helm'),
     arg('KUBECTL', 'kubernetes/kubernetes'),
@@ -82,6 +105,14 @@ module.exports = {
   ],
 
   packageRules: [
+    { matchManagers: ['dockerfile'], groupName: 'base images' },
+    // Only our own registry: every image builds FROM the base published by the base-image
+    // pipeline, so upstream tags (alpine, nginx, node...) are pinned in exactly one place.
+    { matchManagers: ['dockerfile'], matchPackageNames: ['!public.ecr.aws/nullplatform/**'], enabled: false },
+    { matchManagers: ['gomod'], groupName: 'go modules' },
+    { matchManagers: ['npm'], groupName: 'npm packages' },
+    // Already covered by Dependabot there.
+    { matchManagers: ['npm'], matchRepositories: ['nullplatform/platform-feature-flag'], enabled: false },
     // One PR per repo with every pin in it: scopes declares three in the same
     // Dockerfile, and three PRs against one file would conflict with each other.
     { matchManagers: ['custom.regex'], groupName: 'pinned binaries' },
