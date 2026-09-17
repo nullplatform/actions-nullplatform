@@ -29,6 +29,11 @@ on:
         required: false
         type: boolean
         default: false
+      fix_pr_author:
+        description: Author whose open PRs count as "fix waiting for merge". Dependabot and humans also use the dependencies label.
+        required: false
+        type: string
+        default: app/renovate-app-nullplatform
       always_notify:
         description: >-
           Post to Slack even when nothing was found. A report that only speaks
@@ -115,6 +120,7 @@ jobs:
           UPLOAD_SARIF: ${{ inputs.upload_sarif }}
           GH_TOKEN: ${{ steps.pr_token.outputs.token || github.token }}
           REPO_MAP: ${{ steps.repo_map.outputs.map }}
+          FIX_PR_AUTHOR: ${{ inputs.fix_pr_author }}
         run: |
           VULNERABILITIES_FOUND=false
           REPORT=""
@@ -125,17 +131,15 @@ jobs:
           for IMAGE_NAME in $(echo "$IMAGE_NAMES" | jq -r '.[]'); do
             echo "Finding latest tag for ${IMAGE_NAME}..."
 
+            # One describe-images per image; a missing repository is reported as such, not as "no tag".
+            if ! DESC=$(aws ecr-public describe-images --repository-name "${IMAGE_NAME}" --region us-east-1 --output json 2>&1); then
+              echo "::warning::${IMAGE_NAME}: $(echo "${DESC}" | tr -d '\n' | cut -c1-200)"
+              UNSCANNED="${UNSCANNED}\n*${IMAGE_NAME}*: repository not found or not readable"
+              continue
+            fi
             # Newest push among version-shaped tags: highest semver alone picks abandoned lines, newest push alone picks experimental tags.
-            # shellcheck disable=SC2016
-            LATEST_TAG=$(aws ecr-public describe-images \
-              --repository-name "${IMAGE_NAME}" \
-              --region us-east-1 \
-              --query 'imageDetails[?imageTags!=`null`].[imagePushedAt,imageTags]' \
-              --output json 2>/dev/null \
-              | jq -r '.[] | .[0] as $d | .[1][]
-                       | select(test("^v?[0-9]+\\.[0-9]+\\.[0-9]+$"))
-                       | "\($d)\t\(.)"' \
-              | sort | tail -1 | cut -f2)
+            LATEST_TAG=$(echo "${DESC}" | jq -r '.imageDetails[] | select(.imageTags != null) | .imagePushedAt as $d | .imageTags[]
+                       | select(test("^v?[0-9]+\\.[0-9]+\\.[0-9]+$")) | "\($d)\t\(.)"' | sort | tail -1 | cut -f2)
 
             if [ -z "${LATEST_TAG}" ]; then
               # A silent skip is what hid scopes/* and services/* for months; report it instead.
@@ -145,12 +149,8 @@ jobs:
             fi
 
             # A version tag far behind the newest push means the repo stopped versioning and this would scan a dead image.
-            TAG_DATE=$(aws ecr-public describe-images --repository-name "${IMAGE_NAME}" \
-              --region us-east-1 --output json 2>/dev/null \
-              | jq -r --arg t "${LATEST_TAG}" '.imageDetails[] | select(.imageTags // [] | index($t)) | .imagePushedAt' | head -1)
-            LAST_PUSH=$(aws ecr-public describe-images --repository-name "${IMAGE_NAME}" \
-              --region us-east-1 --output json 2>/dev/null \
-              | jq -r '[.imageDetails[].imagePushedAt] | max')
+            TAG_DATE=$(echo "${DESC}" | jq -r --arg t "${LATEST_TAG}" '.imageDetails[] | select(.imageTags // [] | index($t)) | .imagePushedAt' | head -1)
+            LAST_PUSH=$(echo "${DESC}" | jq -r '[.imageDetails[].imagePushedAt] | max')
             if [ -n "${TAG_DATE}" ] && [ -n "${LAST_PUSH}" ]; then
               GAP=$(( ( $(date -u -d "${LAST_PUSH}" +%s) - $(date -u -d "${TAG_DATE}" +%s) ) / 86400 ))
               if [ "${GAP}" -gt 120 ]; then
@@ -184,7 +184,7 @@ jobs:
               [ -z "${SRC}" ] && SRC=$(echo "${REPO_MAP}" | jq -r --arg i "${IMAGE_NAME}" '.[$i] // empty')
               if [ -z "${SRC}" ]; then
                 ACTION="source repo unknown, add it to ecr-image-repos.json"
-              elif PRS=$(gh pr list -R "${GITHUB_REPOSITORY_OWNER}/${SRC}" --state open --label dependencies --json number,url --jq '[.[] | "<\(.url)|#\(.number)>"] | join(" ")' 2>/dev/null); then
+              elif PRS=$(gh pr list -R "${GITHUB_REPOSITORY_OWNER}/${SRC}" --state open --author "${FIX_PR_AUTHOR}" --label dependencies --json number,url --jq '[.[] | "<\(.url)|#\(.number)>"] | join(" ")' 2>/dev/null); then
                 if [ -n "${PRS}" ]; then ACTION="${SRC}: merge ${PRS}"; else ACTION="${SRC}: no open fix PR, rebuild on the current base or decide"; fi
               else
                 ACTION="${SRC}: could not list PRs (private repo, pass app_id/app_private_key)"
