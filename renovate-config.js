@@ -36,7 +36,7 @@ module.exports = {
   // Only the managers below. No npm, no go.mod, no docker FROM: those layers are
   // owned elsewhere (Dependabot / the base-image work), and this must never open
   // a PR nobody asked for.
-  enabledManagers: ['custom.regex', 'dockerfile', 'gomod', 'npm'],
+  enabledManagers: ['custom.regex', 'dockerfile', 'gomod', 'npm', 'github-actions'],
   postUpdateOptions: ['gomodTidy'],
   // Nobody watches these repos and there is no CODEOWNERS: without this a PR notifies no one.
   reviewers: ['team:implementations'],
@@ -69,6 +69,10 @@ module.exports = {
   semanticCommitScope: 'deps',
 
   customManagers: [
+    // Renovate keeps its own version current: the action pulls ghcr.io/renovatebot/renovate:<renovate-version>.
+    { customType: 'regex', managerFilePatterns: ['/^\\.github/workflows/renovate\\.ya?ml$/'],
+      matchStrings: ['renovate-version:\\s*(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)'],
+      depNameTemplate: 'ghcr.io/renovatebot/renovate', datasourceTemplate: 'docker', versioningTemplate: 'docker' },
     // np is installed from its CDN; releases on GitHub are stale, tags are current.
     { customType: 'regex', managerFilePatterns: DOCKERFILES,
       matchStrings: ['ARG NP_VERSION=v?(?<currentValue>[0-9][0-9.]*)'],
@@ -111,6 +115,10 @@ module.exports = {
     // Only our own registry: every image builds FROM the base published by the base-image
     // pipeline, so upstream tags (alpine, nginx, node...) are pinned in exactly one place.
     { matchManagers: ['dockerfile'], matchPackageNames: ['!public.ecr.aws/nullplatform/**'], enabled: false },
+    // github-actions: only in this repo for now (the renovate action SHA and the reusables' own uses:).
+    { matchManagers: ['github-actions'], enabled: false },
+    { matchManagers: ['github-actions'], matchRepositories: ['nullplatform/actions-nullplatform'], enabled: true, groupName: 'github actions' },
+    { matchDepNames: ['ghcr.io/renovatebot/renovate', 'renovatebot/github-action'], groupName: 'renovate' },
     { matchManagers: ['gomod'], groupName: 'go modules' },
     { matchManagers: ['npm'], groupName: 'npm packages' },
     // Already covered by Dependabot there.
