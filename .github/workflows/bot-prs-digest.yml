@@ -1,13 +1,13 @@
 name: bot-prs-digest
 
-# One Slack message, weekdays at 09:45 AR, listing every bot PR still waiting for a
-# merge across the org: Dependabot (base image FROM), Renovate (pinned binaries, Go,
+# One Slack message per cycle, on the 3rd and 17th (base image rebuilt on the 1st/15th,
+# Renovate on the 2nd/16th), listing every bot PR still waiting for a merge across the org: Dependabot (base image FROM), Renovate (pinned binaries, Go,
 # npm, actions) and release-please release PRs. Nobody watches 40 repos; this is the
 # list the person who merges works from. Silent when there is nothing to merge.
 
 on:
   schedule:
-    - cron: '45 12 * * 1-5'
+    - cron: '45 12 3,17 * *'
   workflow_dispatch:
     inputs:
       dry_run:
@@ -20,7 +20,8 @@ permissions:
 
 env:
   # Only repos that publish an image. Org-wide, Dependabot alone has 150 open npm PRs in unrelated repos.
-  IMAGE_REPOS: '^(services-.*|scopes(-.*)?|scope-testing|plugin-base-worker|k8s-tools|customers-aws-image|cli|controlplane-agent|performance-prometheus|traffic-kong-gateway-base-image|actions-nullplatform)$'
+  # services-valkey is not in the public registry on purpose: out of this flow.
+  IMAGE_REPOS: '^(services-(?!valkey$).*|scopes(-.*)?|scope-testing|plugin-base-worker|k8s-tools|customers-aws-image|cli|controlplane-agent|performance-prometheus|traffic-kong-gateway-base-image|actions-nullplatform)$'
 
 concurrency:
   group: bot-prs-digest
