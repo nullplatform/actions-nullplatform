@@ -13,8 +13,13 @@ updates:
       prefix: "fix"
       include: "scope"
     groups:
+      # Minor and patch travel together; a major falls out of the group and gets its own PR, so it is
+      # reviewed on its own instead of riding along with the safe ones.
       github-actions:
         patterns:
           - "*"
+        update-types:
+          - "minor"
+          - "patch"
     labels:
       - "dependencies"
