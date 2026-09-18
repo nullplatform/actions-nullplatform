@@ -29,6 +29,19 @@ on:
         required: false
         type: boolean
         default: false
+      fix_pr_author:
+        description: Author whose open PRs count as "fix waiting for merge". Dependabot and humans also use the dependencies label.
+        required: false
+        type: string
+        default: app/renovate-app-nullplatform
+      always_notify:
+        description: >-
+          Post to Slack even when nothing was found. A report that only speaks
+          when it has findings is indistinguishable from a dead one - that is how
+          this scan sat broken for four months. The centralized caller sets this.
+        required: false
+        type: boolean
+        default: false
     secrets:
       aws_role_arn:
         description: 'AWS IAM Role ARN for OIDC authentication'
@@ -36,6 +49,11 @@ on:
       slack_webhook_url:
         description: 'Slack webhook URL for vulnerability alerts'
         required: true
+      app_id:
+        description: GitHub App used only to list open fix PRs in private image repos. Optional; public repos work with the default token.
+        required: false
+      app_private_key:
+        required: false
 
 permissions:
   id-token: write
@@ -49,6 +67,7 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      APP_ID: ${{ secrets.app_id }}
 
     steps:
       - name: Configure AWS credentials
@@ -75,6 +94,23 @@ jobs:
           sudo mv trivy /usr/local/bin/trivy
           trivy --version
 
+      - name: App token for PR lookup
+        id: pr_token
+        if: env.APP_ID != ''
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.app_id }}
+          private-key: ${{ secrets.app_private_key }}
+          owner: ${{ github.repository_owner }}
+
+      - name: Image to source-repo map
+        id: repo_map
+        run: |
+          # Label org.opencontainers.image.source wins; this map covers images that do not carry it.
+          MAP=$(curl -fsSL https://raw.githubusercontent.com/nullplatform/actions-nullplatform/main/.github/ecr-image-repos.json 2>/dev/null || echo '{}')
+          echo "$MAP" | jq -e . >/dev/null 2>&1 || MAP='{}'
+          echo "map=$(echo "$MAP" | jq -c .)" >> "$GITHUB_OUTPUT"
+
       - name: Get latest tags and scan images
         id: scan
         env:
@@ -82,26 +118,28 @@ jobs:
           REGISTRY: ${{ inputs.ecr_registry }}
           SEVERITY: ${{ inputs.severity }}
           UPLOAD_SARIF: ${{ inputs.upload_sarif }}
+          GH_TOKEN: ${{ steps.pr_token.outputs.token || github.token }}
+          REPO_MAP: ${{ steps.repo_map.outputs.map }}
+          FIX_PR_AUTHOR: ${{ inputs.fix_pr_author }}
         run: |
           VULNERABILITIES_FOUND=false
           REPORT=""
           UNSCANNED=""
           STALE=""
+          SCANNED=0
 
           for IMAGE_NAME in $(echo "$IMAGE_NAMES" | jq -r '.[]'); do
             echo "Finding latest tag for ${IMAGE_NAME}..."
 
+            # One describe-images per image; a missing repository is reported as such, not as "no tag".
+            if ! DESC=$(aws ecr-public describe-images --repository-name "${IMAGE_NAME}" --region us-east-1 --output json 2>&1); then
+              echo "::warning::${IMAGE_NAME}: $(echo "${DESC}" | tr -d '\n' | cut -c1-200)"
+              UNSCANNED="${UNSCANNED}\n*${IMAGE_NAME}*: repository not found or not readable"
+              continue
+            fi
             # Newest push among version-shaped tags: highest semver alone picks abandoned lines, newest push alone picks experimental tags.
-            # shellcheck disable=SC2016
-            LATEST_TAG=$(aws ecr-public describe-images \
-              --repository-name "${IMAGE_NAME}" \
-              --region us-east-1 \
-              --query 'imageDetails[?imageTags!=`null`].[imagePushedAt,imageTags]' \
-              --output json 2>/dev/null \
-              | jq -r '.[] | .[0] as $d | .[1][]
-                       | select(test("^v?[0-9]+\\.[0-9]+\\.[0-9]+$"))
-                       | "\($d)\t\(.)"' \
-              | sort | tail -1 | cut -f2)
+            LATEST_TAG=$(echo "${DESC}" | jq -r '.imageDetails[] | select(.imageTags != null) | .imagePushedAt as $d | .imageTags[]
+                       | select(test("^v?[0-9]+\\.[0-9]+\\.[0-9]+$")) | "\($d)\t\(.)"' | sort | tail -1 | cut -f2)
 
             if [ -z "${LATEST_TAG}" ]; then
               # A silent skip is what hid scopes/* and services/* for months; report it instead.
@@ -111,12 +149,8 @@ jobs:
             fi
 
             # A version tag far behind the newest push means the repo stopped versioning and this would scan a dead image.
-            TAG_DATE=$(aws ecr-public describe-images --repository-name "${IMAGE_NAME}" \
-              --region us-east-1 --output json 2>/dev/null \
-              | jq -r --arg t "${LATEST_TAG}" '.imageDetails[] | select(.imageTags // [] | index($t)) | .imagePushedAt' | head -1)
-            LAST_PUSH=$(aws ecr-public describe-images --repository-name "${IMAGE_NAME}" \
-              --region us-east-1 --output json 2>/dev/null \
-              | jq -r '[.imageDetails[].imagePushedAt] | max')
+            TAG_DATE=$(echo "${DESC}" | jq -r --arg t "${LATEST_TAG}" '.imageDetails[] | select(.imageTags // [] | index($t)) | .imagePushedAt' | head -1)
+            LAST_PUSH=$(echo "${DESC}" | jq -r '[.imageDetails[].imagePushedAt] | max')
             if [ -n "${TAG_DATE}" ] && [ -n "${LAST_PUSH}" ]; then
               GAP=$(( ( $(date -u -d "${LAST_PUSH}" +%s) - $(date -u -d "${TAG_DATE}" +%s) ) / 86400 ))
               if [ "${GAP}" -gt 120 ]; then
@@ -145,19 +179,34 @@ jobs:
 
             if [ "$CRITICAL" -gt 0 ] || [ "$HIGH" -gt 0 ]; then
               VULNERABILITIES_FOUND=true
-              REPORT="${REPORT}\n*${IMAGE_NAME}:${LATEST_TAG}*: ${CRITICAL} critical, ${HIGH} high"
+              # The line is an action, not a CVE list: a fixable finding still published after Renovate ran means a PR to merge, a rebuild, or a decision.
+              SRC=$(echo "$RESULT" | jq -r '.Metadata.ImageConfig.config.Labels["org.opencontainers.image.source"] // empty' | sed -E 's#^https://github\.com/[^/]+/([^/]+).*$#\1#')
+              [ -z "${SRC}" ] && SRC=$(echo "${REPO_MAP}" | jq -r --arg i "${IMAGE_NAME}" '.[$i] // empty')
+              if [ -z "${SRC}" ]; then
+                ACTION="source repo unknown, add it to ecr-image-repos.json"
+              elif PRS=$(gh pr list -R "${GITHUB_REPOSITORY_OWNER}/${SRC}" --state open --author "${FIX_PR_AUTHOR}" --label dependencies --json number,url --jq '[.[] | "<\(.url)|#\(.number)>"] | join(" ")' 2>/dev/null); then
+                if [ -n "${PRS}" ]; then ACTION="${SRC}: merge ${PRS}"; else ACTION="${SRC}: no open fix PR, rebuild on the current base or decide"; fi
+              else
+                ACTION="${SRC}: could not list PRs (private repo, pass app_id/app_private_key)"
+              fi
+              REPORT="${REPORT}\n*${IMAGE_NAME}:${LATEST_TAG}*: ${CRITICAL} critical, ${HIGH} high -> ${ACTION}"
             fi
 
             echo "  Critical: ${CRITICAL}, High: ${HIGH}"
+            SCANNED=$((SCANNED+1))
           done
 
-          echo "vulnerabilities_found=${VULNERABILITIES_FOUND}" >> "$GITHUB_OUTPUT"
+          {
+            echo "vulnerabilities_found=${VULNERABILITIES_FOUND}"
+            echo "scanned=${SCANNED}"
+            echo "total=$(echo "$IMAGE_NAMES" | jq length)"
+          } >> "$GITHUB_OUTPUT"
           if [ -n "${UNSCANNED}" ]; then VULNERABILITIES_FOUND=true; fi
           REPORT="${REPORT}${UNSCANNED}${STALE}"
           if [ -n "${STALE}" ]; then VULNERABILITIES_FOUND=true; fi
 
           # Save report for Slack (escape newlines for JSON)
-          REPORT_ESCAPED=$(echo -e "$REPORT" | sed 's/"/\\"/g' | tr '\n' '|' | sed 's/|/\\n/g')
+          REPORT_ESCAPED=$(echo -e "$REPORT" | sed 's/"/\\"/g' | tr '\n' '\001' | sed 's/\x01/\\n/g')
           echo "report=${REPORT_ESCAPED}" >> "$GITHUB_OUTPUT"
 
       - name: Upload SARIF to GitHub Security tab
@@ -169,39 +218,36 @@ jobs:
         continue-on-error: true
 
       - name: Send Slack alert
-        if: steps.scan.outputs.vulnerabilities_found == 'true'
+        if: steps.scan.outputs.vulnerabilities_found == 'true' || inputs.always_notify
+        env:
+          FOUND: ${{ steps.scan.outputs.vulnerabilities_found }}
+          REPORT: ${{ steps.scan.outputs.report }}
+          SCANNED: ${{ steps.scan.outputs.scanned }}
+          TOTAL: ${{ steps.scan.outputs.total }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          WEBHOOK: ${{ secrets.slack_webhook_url }}
         run: |
-          REPORT='${{ steps.scan.outputs.report }}'
-          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-
-          curl -X POST -H 'Content-type: application/json' \
-            --data "{
-              \"blocks\": [
-                {
-                  \"type\": \"header\",
-                  \"text\": {
-                    \"type\": \"plain_text\",
-                    \"text\": \"Security Alert: Vulnerabilities Found\",
-                    \"emoji\": true
-                  }
-                },
-                {
-                  \"type\": \"section\",
-                  \"text\": {
-                    \"type\": \"mrkdwn\",
-                    \"text\": \"The following images have CRITICAL or HIGH vulnerabilities:\\n${REPORT}\"
-                  }
-                },
-                {
-                  \"type\": \"section\",
-                  \"text\": {
-                    \"type\": \"mrkdwn\",
-                    \"text\": \"<${RUN_URL}|View full scan results>\"
-                  }
-                }
-              ]
-            }" \
-            '${{ secrets.slack_webhook_url }}'
+          set -euo pipefail
+          if [ -z "${WEBHOOK}" ]; then
+            echo "::warning::slack_webhook_url is empty: skipping the Slack alert"
+            exit 0
+          fi
+          # The scan step pre-escapes REPORT for hand-built JSON (backslash-n, backslash-quote).
+          # Undo that and let jq do the escaping: hand-escaping is how a report ends up unsent.
+          REPORT_TXT=$(printf '%b' "${REPORT}" | sed 's/\\"/"/g')
+          if [ "${FOUND}" = "true" ]; then
+            HEADLINE="Image scan: actions pending"
+            BODY="Scanned ${SCANNED}/${TOTAL} images. Still published with a fixable CRITICAL/HIGH after Renovate and the base rebuild, or out of the automation's reach:${REPORT_TXT}"
+          else
+            HEADLINE="Image scan: ${SCANNED}/${TOTAL} images clean"
+            BODY="No fixable CRITICAL or HIGH findings. This message is the heartbeat: if it stops arriving, the scan is broken."
+          fi
+          jq -n --arg h "$HEADLINE" --arg b "$BODY" --arg run "$RUN_URL" '{blocks:[
+            {type:"header",text:{type:"plain_text",text:$h,emoji:true}},
+            {type:"section",text:{type:"mrkdwn",text:$b}},
+            {type:"context",elements:[{type:"mrkdwn",text:("<"+$run+"|View full scan results>")}]}]}' > slack.json
+          # --fail-with-body: curl returns 0 even when Slack rejects the payload.
+          curl -sS --fail-with-body -X POST -H 'Content-type: application/json' --data @slack.json "${WEBHOOK}"
 
       - name: Summary
         run: |
