@@ -43,6 +43,8 @@ module.exports = {
   ],
   onboarding: false,
   requireConfig: 'optional',
+  // Only command a repo-level postUpgradeTasks may run (customers-aws-image bumps its image tag when the base moves).
+  allowedCommands: ['^node scripts/bump-nginx-tag\\.js$'],
   dependencyDashboard: false,
 
   // Only the managers below. No npm, no go.mod, no docker FROM: those layers are
@@ -95,10 +97,7 @@ module.exports = {
     { customType: 'regex', managerFilePatterns: ['/^\\.github/workflows/.+\\.ya?ml$/'],
       matchStrings: ['go-version:\\s*[\'"]?(?<currentValue>1\\.[0-9.]+)[\'"]?'],
       depNameTemplate: 'go', datasourceTemplate: 'golang-version' },
-    // np-nginx takes the tag of the shared base (worker-bridge) from main-config.json, not from the Dockerfile.
-    { customType: 'regex', managerFilePatterns: ['/(^|/)main-config\\.json$/'],
-      matchStrings: ['"base_version":\\s*"(?<currentValue>[0-9][0-9.]*)"'],
-      depNameTemplate: 'public.ecr.aws/nullplatform/scopes/worker-bridge', datasourceTemplate: 'docker', versioningTemplate: 'docker' },
+    // np-nginx's base pin (main-config.json base_version) is managed by that repo's own renovate.json: it changes with its Dockerfile.
     // fluent-bit on the customer AMI: install.sh honours FLUENT_BIT_RELEASE_VERSION; releases are tagged vX.Y.Z.
     { customType: 'regex', managerFilePatterns: ['/(^|/)main-config\\.json$/'],
       matchStrings: ['"binary_version":\\s*"(?<currentValue>[0-9][0-9.]*)"'],
@@ -140,6 +139,10 @@ module.exports = {
     // Majors are never proposed automatically, for anything. A major is a
     // compatibility decision, not a dependency bump.
     { matchUpdateTypes: ['major'], enabled: false },
+
+    // Except Renovate's own: it ships a major every few months and drops config options in them.
+    // With majors off nobody would ever hear about it. The PR still needs a review to merge.
+    { matchDepNames: ['ghcr.io/renovatebot/renovate', 'renovatebot/github-action'], matchUpdateTypes: ['major'], enabled: true },
 
     // Ceilings measured in Sep 2026. Raising either one is a policy change.
     // Helm 4 carries breaking changes; 3.22.0 already scans clean.

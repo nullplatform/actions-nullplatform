@@ -27,6 +27,11 @@ on:
         description: 'Log what would change without opening PRs'
         type: boolean
         default: true
+      log_level:
+        description: 'Renovate log level (debug shows the underlying platform errors)'
+        type: choice
+        options: [info, debug]
+        default: info
 
 permissions:
   contents: read
@@ -75,5 +80,5 @@ jobs:
           configurationFile: renovate-config.js
           renovate-version: 44.93.4
         env:
-          LOG_LEVEL: info
+          LOG_LEVEL: ${{ inputs.log_level || 'info' }}
           RENOVATE_DRY_RUN: ${{ env.RENOVATE_DRY_RUN }}

@@ -1,0 +1,33 @@
+name: pr-checks-renovate-config
+
+# renovate-config.js is only exercised by the scheduled run, up to two weeks away: an upgrade of
+# Renovate that drops an option we use would land green and only fail there. This validates the
+# config with the exact version the PR pins in renovate.yml.
+
+on:
+  pull_request:
+    paths:
+      - renovate-config.js
+      - .github/workflows/renovate.yml
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate Renovate config
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Validate against the pinned Renovate version
+        run: |
+          set -euo pipefail
+          version=$(sed -nE 's/.*renovate-version:[[:space:]]*"?([0-9]+\.[0-9]+\.[0-9]+)"?.*/\1/p' .github/workflows/renovate.yml | head -1)
+          if [ -z "${version}" ]; then
+            echo "::error file=.github/workflows/renovate.yml::no renovate-version pinned"
+            exit 1
+          fi
+          echo "validating renovate-config.js with renovate@${version}"
+          npx -y -p "renovate@${version}" renovate-config-validator --strict renovate-config.js
