@@ -23,7 +23,12 @@ jobs:
 
       - name: Run actionlint
         run: |
-          ./actionlint -ignore 'unknown permission scope "models"'
+          # actionlint 1.7.12 still ships the old metadata for create-github-app-token: it has client-id
+          # since v2 and app-id is deprecated there, so its two complaints about them are wrong.
+          ./actionlint \
+            -ignore 'unknown permission scope "models"' \
+            -ignore 'input "client-id" is not defined in action "actions/create-github-app-token' \
+            -ignore 'missing input "app-id" which is required by action "actions/create-github-app-token'
 
   secret-scan:
     name: Scan for credentials
