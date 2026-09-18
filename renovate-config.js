@@ -28,7 +28,19 @@ const arg = (name, depName) => ({
 module.exports = {
   platform: 'github',
   autodiscover: true,
-  autodiscoverFilter: ['nullplatform/*'],
+  // Only the repos we maintain images/pins for: every scopes-*/services-* (new ones included) plus a fixed set.
+  // The App may be installed org-wide; this list is what actually gets processed.
+  autodiscoverFilter: [
+    'nullplatform/services-*',
+    'nullplatform/scopes-*',
+    'nullplatform/actions-nullplatform',
+    'nullplatform/customers-aws-image',
+    'nullplatform/controlplane-agent',
+    'nullplatform/cli',
+    'nullplatform/performance-prometheus',
+    'nullplatform/traffic-kong-gateway-base-image',
+    'nullplatform/k8s-tools',
+  ],
   onboarding: false,
   requireConfig: 'optional',
   // Only command a repo-level postUpgradeTasks may run (customers-aws-image bumps its image tag when the base moves).
