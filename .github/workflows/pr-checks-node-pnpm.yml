@@ -13,6 +13,28 @@ on:
         required: false
         type: string
         default: ''
+      # The three inputs below are opt-in. Left at their defaults, the job runs exactly
+      # as before: shallow checkout, lint, `pnpm test`.
+      changed-since:
+        description: >-
+          Git ref (usually `github.event.pull_request.base.sha`). When set, the checkout
+          fetches full history and tests run as `pnpm test -- --changed <ref>`, so only
+          the test files related to the diff execute (vitest). Empty = run the whole suite.
+        required: false
+        type: string
+        default: ''
+      shard:
+        description: >-
+          Vitest shard to run, as `<index>/<count>` (e.g. `2/4`). Call this workflow from a
+          matrix job to spread the suite across runners. Empty = no sharding.
+        required: false
+        type: string
+        default: ''
+      lint:
+        description: 'Run the lint step. Set to false on all but one shard so lint runs once.'
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -26,7 +48,10 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.CI_TOKEN || secrets.DEPENDABOT_TOKEN || secrets.GITHUB_TOKEN }}
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
+      # `--changed <ref>` diffs `<ref>...HEAD`, so the ref has to be in the local history.
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: ${{ inputs.changed-since != '' && '0' || '1' }}
 
       - name: Install pnpm
         uses: pnpm/action-setup@v6
@@ -52,6 +77,7 @@ jobs:
         run: pnpm install
 
       - name: Lint
+        if: inputs.lint
         uses: nullplatform/actions-nullplatform/.github/actions/run-first@main
         with:
           candidates: 'test:static lint'
@@ -60,4 +86,16 @@ jobs:
 
       - name: Run tests
         working-directory: ${{ inputs.working-directory }}
-        run: pnpm test
+        env:
+          CHANGED_SINCE: ${{ inputs.changed-since }}
+          SHARD: ${{ inputs.shard }}
+        run: |
+          ARGS=()
+          if [ -n "$CHANGED_SINCE" ]; then ARGS+=(--changed "$CHANGED_SINCE"); fi
+          # A shard can end up with no test files once `--changed` has filtered the suite.
+          if [ -n "$SHARD" ]; then ARGS+=(--shard "$SHARD" --passWithNoTests); fi
+          if [ ${#ARGS[@]} -eq 0 ]; then
+            pnpm test
+          else
+            pnpm test -- "${ARGS[@]}"
+          fi

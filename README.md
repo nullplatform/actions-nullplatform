@@ -355,12 +355,17 @@ with:
 
 Runs linting and tests for Node.js projects using pnpm. Supports pnpm workspaces and monorepos, with automatic Node version detection. Use this for pnpm-based projects.
 
+Three opt-in inputs let a repository run only the tests related to a PR (vitest `--changed`) and spread a large suite across runners (vitest `--shard`). Left at their defaults the job behaves exactly as before.
+
 **Inputs**
 
 | Name | Description | Required | Default |
 |------|-------------|----------|---------|
 | working-directory | Working directory for pnpm commands | No | . |
 | node-version | Node.js version (overrides .node-version file if set) | No | '' |
+| changed-since | Git ref, usually `github.event.pull_request.base.sha`. When set, the checkout fetches full history and tests run as `pnpm test -- --changed <ref>`, so only the test files related to the diff execute. Empty runs the whole suite. | No | '' |
+| shard | Vitest shard as `<index>/<count>` (e.g. `2/4`). Call the workflow from a matrix job to spread the suite across runners. Empty means no sharding. | No | '' |
+| lint | Run the lint step. Set to false on all but one shard so lint runs once. | No | true |
 
 **Secrets required**
 - None (uses `GITHUB_TOKEN` or `CI_TOKEN` for private packages)
@@ -372,6 +377,23 @@ uses: nullplatform/actions-nullplatform/.github/workflows/pr-checks-node-pnpm.ym
 with:
   working-directory: ./packages/core
   node-version: '20'
+```
+
+Affected tests only, spread over four shards (vitest):
+
+```yaml
+jobs:
+  testing:
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    uses: nullplatform/actions-nullplatform/.github/workflows/pr-checks-node-pnpm.yml@main
+    with:
+      changed-since: ${{ github.event.pull_request.base.sha }}
+      shard: ${{ matrix.shard }}/4
+      lint: ${{ matrix.shard == 1 }}
+    secrets: inherit
 ```
 
 ### PR Checks - Node Build (pnpm)
