@@ -20,8 +20,10 @@ permissions:
 
 env:
   # Only repos that publish an image. Org-wide, Dependabot alone has 150 open npm PRs in unrelated repos.
-  # services-valkey is not in the public registry on purpose: out of this flow.
-  IMAGE_REPOS: '^(services-(?!valkey$).*|scopes(-.*)?|scope-testing|plugin-base-worker|k8s-tools|customers-aws-image|cli|controlplane-agent|performance-prometheus|traffic-kong-gateway-base-image|actions-nullplatform)$'
+  IMAGE_REPOS: '^(services-.*|scopes(-.*)?|scope-testing|plugin-base-worker|k8s-tools|customers-aws-image|cli|controlplane-agent|performance-prometheus|traffic-kong-gateway-base-image|actions-nullplatform)$'
+
+  # scopes-*/services-* repos exempt from the release-conformance check (dead since 2023).
+  CONFORMANCE_IGNORE: '^(services-executor-base-image)$'
 
 concurrency:
   group: bot-prs-digest
@@ -65,28 +67,65 @@ jobs:
           echo "count=$(jq length prs.json)" >> "$GITHUB_OUTPUT"
           jq -r '.[] | "  \(.repository.name)#\(.number) [\(.bot)] \(.title)"' prs.json
 
+      # Core's rule: every public scopes-*/services-* repo releases through release-publish-oci and merges
+      # its release PR itself. A repo listed here needs the standard set, not a hand-merged release PR.
+      - name: Release conformance of scopes-*/services-*
+        id: conformance
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          OWNER: ${{ github.repository_owner }}
+          IGNORE: ${{ env.CONFORMANCE_IGNORE }}
+        run: |
+          set -euo pipefail
+          gh api --paginate "orgs/${OWNER}/repos?per_page=100&type=all" --jq '.[] | select(.archived == false and .visibility == "public") | .name' \
+            | grep -E '^(scopes|services)-' | grep -vE "${IGNORE}" | sort > repos.txt
+          : > conformance.tsv
+          while read -r repo; do
+            status=$(gh api -i "repos/${OWNER}/${repo}/contents/.github/workflows" 2>/dev/null | head -1 | awk '{print $2}' || true)
+            if [ "${status}" = "403" ]; then printf '%s\t%s\n' "${repo}" "workflows not readable by the App token" >> conformance.tsv; continue; fi
+            release=$(gh api "repos/${OWNER}/${repo}/contents/.github/workflows/release.yml" --jq .content 2>/dev/null | base64 -d 2>/dev/null || true)
+            caller=$(gh api "repos/${OWNER}/${repo}/contents/.github/workflows/auto-merge-release.yml" --jq .content 2>/dev/null | base64 -d 2>/dev/null || true)
+            problems=()
+            # Both reusables count: release-publish-oci.yml (current) and release.yml (earlier services).
+            grep -qE 'actions-nullplatform/.github/workflows/release(-publish-oci)?\.yml' <<< "${release}" || problems+=("no standard release.yml")
+            if [ -z "${caller}" ]; then problems+=("no auto-merge caller")
+            elif ! grep -q 'workflow_run' <<< "${caller}"; then problems+=("caller still on pull_request"); fi
+            [ "${#problems[@]}" -eq 0 ] || printf '%s\t%s\n' "${repo}" "$(IFS=,; echo "${problems[*]}")" >> conformance.tsv
+          done < repos.txt
+          jq -R -s 'split("\n") | map(select(length > 0) | split("\t") | {repo: .[0], problems: .[1]})' conformance.tsv > conformance.json
+          echo "total=$(wc -l < repos.txt | tr -d ' ')" >> "$GITHUB_OUTPUT"
+          echo "count=$(jq length conformance.json)" >> "$GITHUB_OUTPUT"
+          cat conformance.tsv
+
       - name: Post to Slack
-        if: steps.collect.outputs.count != '0'
+        if: steps.collect.outputs.count != '0' || steps.conformance.outputs.count != '0'
         env:
           WEBHOOK: ${{ secrets.SLACK_SECURITY_URL }}
           DRY_RUN: ${{ inputs.dry_run }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TOTAL: ${{ steps.conformance.outputs.total }}
         run: |
           set -euo pipefail
           # One section per repo (Slack caps a section at 3000 chars and a message at 50 blocks).
-          jq -n --arg run "$RUN_URL" --slurpfile prs prs.json '
-            ($prs[0]) as $all
+          jq -n --arg run "$RUN_URL" --arg total "$TOTAL" --slurpfile prs prs.json --slurpfile conf conformance.json '
+            ($prs[0]) as $all | ($conf[0]) as $bad
             | ($all | group_by(.repository.name) | map({type:"section", text:{type:"mrkdwn", text:
                 ("*" + .[0].repository.name + "*\n" +
                  (map("• <" + .url + "|#" + (.number|tostring) + "> " + .bot + " · " + (.title|.[0:90])
                        + " · " + (((now - (.createdAt | fromdateiso8601)) / 86400 | floor | tostring) + "d"))
                   | join("\n")) | .[0:2900])}})) as $groups
-            | {blocks: (
+            | (if ($all|length) > 0 then
                 [{type:"header", text:{type:"plain_text", text:("Bot PRs waiting for merge: " + ($all|length|tostring)), emoji:true}}]
-                + ($groups | .[0:45])
-                + (if ($groups|length) > 45 then [{type:"section", text:{type:"mrkdwn", text:("… and " + (($groups|length) - 45 | tostring) + " more repos")}}] else [] end)
-                + [{type:"context", elements:[{type:"mrkdwn", text:("Dependabot moves the base image, Renovate the pinned binaries/Go/npm, release-please cuts the release. Merge and the image ships. <" + $run + "|run>")}]}]
-              )}' > slack.json
+                + ($groups | .[0:42])
+                + (if ($groups|length) > 42 then [{type:"section", text:{type:"mrkdwn", text:("… and " + (($groups|length) - 42 | tostring) + " more repos")}}] else [] end)
+                + [{type:"context", elements:[{type:"mrkdwn", text:("Dependabot moves the base image, Renovate the pinned binaries/Go/npm, release-please cuts the release. Merge = publish. <" + $run + "|run>")}]}]
+              else [] end) as $prblocks
+            | (if ($bad|length) > 0 then
+                [{type:"header", text:{type:"plain_text", text:("Repos without the standard auto release: " + ($bad|length|tostring) + " of " + $total), emoji:true}},
+                 {type:"section", text:{type:"mrkdwn", text:(($bad | map("• *" + .repo + "*: " + .problems) | join("\n")) | .[0:2900])}},
+                 {type:"context", elements:[{type:"mrkdwn", text:"Core rule: every public scopes-*/services-* repo releases with release-publish-oci and merges its release PR from workflow_run. Give these the standard set instead of merging their release PRs by hand."}]}]
+              else [] end) as $confblocks
+            | {blocks: ($prblocks + $confblocks)}' > slack.json
           if [ "${DRY_RUN}" = "true" ]; then echo "DRY RUN - would post:"; jq -r '.blocks[] | .text.text // .elements[0].text' slack.json; exit 0; fi
           # --fail-with-body: curl returns 0 even when Slack rejects the payload.
           curl -sS --fail-with-body -X POST -H 'Content-type: application/json' --data @slack.json "${WEBHOOK}"
