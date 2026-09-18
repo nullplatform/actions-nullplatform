@@ -357,13 +357,15 @@ Runs linting and tests for Node.js projects using pnpm. Supports pnpm workspaces
 
 Three opt-in inputs let a repository run only the tests related to a PR (vitest `--changed`) and spread a large suite across runners (vitest `--shard`). Left at their defaults the job behaves exactly as before.
 
+`changed-since` and `shard` append flags to `pnpm test`, so they assume the consumer's `test` script ends in a bare vitest invocation that accepts trailing flags (e.g. `"test": "vitest --run"`). A script such as `run-p lint vitest`, or one with its own arguments after the binary, would hand the flags to the wrong command.
+
 **Inputs**
 
 | Name | Description | Required | Default |
 |------|-------------|----------|---------|
 | working-directory | Working directory for pnpm commands | No | . |
 | node-version | Node.js version (overrides .node-version file if set) | No | '' |
-| changed-since | Git ref, usually `github.event.pull_request.base.sha`. When set, the checkout fetches full history and tests run as `pnpm test -- --changed <ref>`, so only the test files related to the diff execute. Empty runs the whole suite. | No | '' |
+| changed-since | Git ref, usually `github.event.pull_request.base.sha`. When set, the checkout fetches full history and tests run as `pnpm test --changed <ref>`, so only the test files related to the diff execute. Empty runs the whole suite. | No | '' |
 | shard | Vitest shard as `<index>/<count>` (e.g. `2/4`). Call the workflow from a matrix job to spread the suite across runners. Empty means no sharding. | No | '' |
 | lint | Run the lint step. Set to false on all but one shard so lint runs once. | No | true |
 
@@ -395,6 +397,8 @@ jobs:
       lint: ${{ matrix.shard == 1 }}
     secrets: inherit
 ```
+
+With `shard`, the caller's matrix produces one check context per shard (`testing (1) / Testing`, `testing (2) / Testing`, …) instead of a single `testing / Testing`. Branch protection that requires a check named after the single job keeps waiting for a check nobody reports any more; update the ruleset when adopting shards, or require an aggregating job of your own.
 
 ### PR Checks - Node Build (pnpm)
 

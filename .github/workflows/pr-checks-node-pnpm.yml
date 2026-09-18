@@ -18,7 +18,7 @@ on:
       changed-since:
         description: >-
           Git ref (usually `github.event.pull_request.base.sha`). When set, the checkout
-          fetches full history and tests run as `pnpm test -- --changed <ref>`, so only
+          fetches full history and tests run as `pnpm test --changed <ref>`, so only
           the test files related to the diff execute (vitest). Empty = run the whole suite.
         required: false
         type: string
