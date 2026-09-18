@@ -24,7 +24,7 @@ jobs:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
       - name: Install nullplatform cli
         run: curl https://cli.nullplatform.com/install.sh | sh
       - name: Start nullplatform CI
@@ -41,7 +41,7 @@ jobs:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
       - name: Install nullplatform cli
         run: curl https://cli.nullplatform.com/install.sh | sh
       - name: Set up QEMU
