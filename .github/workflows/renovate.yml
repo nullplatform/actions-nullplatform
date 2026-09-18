@@ -58,10 +58,10 @@ jobs:
       # than run Renovate with a token that cannot write anywhere.
       - name: Is the App configured?
         env:
-          APP_ID: ${{ secrets.RENOVATE_APP_ID }}
+          APP_KEY: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
         run: |
-          if [ -z "${APP_ID}" ]; then
-            echo "::error::RENOVATE_APP_ID is not configured. Renovate needs the renovate-app-nullplatform App token."
+          if [ -z "${APP_KEY}" ]; then
+            echo "::error::RENOVATE_APP_PRIVATE_KEY is not configured. Renovate needs the renovate-app-nullplatform App token."
             exit 1
           fi
 
@@ -69,7 +69,8 @@ jobs:
         id: app
         uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ secrets.RENOVATE_APP_ID }}
+          # Public identifier (GET /apps/renovate-app-nullplatform returns it); app-id is deprecated.
+          client-id: Iv23liSjqC5OQnkfqmrv
           private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
           owner: nullplatform
 
