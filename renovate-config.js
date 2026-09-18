@@ -140,6 +140,10 @@ module.exports = {
     // compatibility decision, not a dependency bump.
     { matchUpdateTypes: ['major'], enabled: false },
 
+    // Except Renovate's own: it ships a major every few months and drops config options in them.
+    // With majors off nobody would ever hear about it. The PR still needs a review to merge.
+    { matchDepNames: ['ghcr.io/renovatebot/renovate', 'renovatebot/github-action'], matchUpdateTypes: ['major'], enabled: true },
+
     // Ceilings measured in Sep 2026. Raising either one is a policy change.
     // Helm 4 carries breaking changes; 3.22.0 already scans clean.
     { matchDepNames: ['helm/helm'], allowedVersions: '<4' },
