@@ -1,0 +1,13 @@
+name: Check dependency version ranges
+description: Fails when package.json declares version ranges with no upper bound (*, latest, bare >= / >)
+inputs:
+  working-directory:
+    required: false
+    default: '.'
+runs:
+  using: composite
+  steps:
+    - shell: sh
+      env:
+        WORKING_DIR: ${{ inputs.working-directory }}
+      run: node "$GITHUB_ACTION_PATH/check-version-ranges.mjs" "$WORKING_DIR/package.json"

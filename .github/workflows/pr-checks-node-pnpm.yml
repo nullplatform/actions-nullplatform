@@ -13,6 +13,11 @@ on:
         required: false
         type: string
         default: ''
+      check-dependency-ranges:
+        description: 'Fail when package.json has unbounded version ranges (*, latest, bare >= / >)'
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -46,6 +51,12 @@ jobs:
           node-version: ${{ inputs.node-version }}
           cache: 'pnpm'
           cache-dependency-path: ${{ inputs.working-directory }}/pnpm-lock.yaml
+
+      - name: Check dependency ranges
+        if: inputs.check-dependency-ranges
+        uses: nullplatform/actions-nullplatform/.github/actions/check-dependency-ranges@main
+        with:
+          working-directory: ${{ inputs.working-directory }}
 
       - name: Install dependencies
         working-directory: ${{ inputs.working-directory }}
