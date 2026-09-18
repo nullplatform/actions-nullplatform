@@ -74,11 +74,12 @@ jobs:
           owner: nullplatform
 
       - name: Renovate
+        # No renovate-version pin: the action's default decides which Renovate image runs, and
+        # Dependabot keeps the action current. Pinning it here would mean the App writing this file.
         uses: renovatebot/github-action@dcfba84a42d1b5d5e49bf131b1bf53511851a123 # v46.3.1
         with:
           token: ${{ steps.app.outputs.token }}
           configurationFile: renovate-config.js
-          renovate-version: 44.93.4
         env:
           LOG_LEVEL: ${{ inputs.log_level || 'info' }}
           RENOVATE_DRY_RUN: ${{ env.RENOVATE_DRY_RUN }}

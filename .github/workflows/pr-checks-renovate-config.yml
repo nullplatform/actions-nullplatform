@@ -2,7 +2,8 @@ name: pr-checks-renovate-config
 
 # renovate-config.js is only exercised by the scheduled run, up to two weeks away: an upgrade of
 # Renovate that drops an option we use would land green and only fail there. This validates the
-# config with the exact version the PR pins in renovate.yml.
+# config with the Renovate version that will actually run, which is the default of the action
+# revision pinned in renovate.yml.
 
 on:
   pull_request:
@@ -21,13 +22,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Validate against the pinned Renovate version
+      - name: Validate against the Renovate version the action runs
         run: |
           set -euo pipefail
-          version=$(sed -nE 's/.*renovate-version:[[:space:]]*"?([0-9]+\.[0-9]+\.[0-9]+)"?.*/\1/p' .github/workflows/renovate.yml | head -1)
-          if [ -z "${version}" ]; then
-            echo "::error file=.github/workflows/renovate.yml::no renovate-version pinned"
+          ref=$(sed -nE 's#.*uses: renovatebot/github-action@([0-9a-f]{40}).*#\1#p' .github/workflows/renovate.yml | head -1)
+          if [ -z "${ref}" ]; then
+            echo "::error file=.github/workflows/renovate.yml::renovatebot/github-action is not pinned to a commit SHA"
             exit 1
           fi
-          echo "validating renovate-config.js with renovate@${version}"
+          version=$(curl -fsSL "https://raw.githubusercontent.com/renovatebot/github-action/${ref}/action.yml" \
+            | awk '/^  renovate-version:/{f=1} f && /default:/{gsub(/[^0-9.]/, "", $2); print $2; exit}')
+          if [ -z "${version}" ]; then
+            echo "::error::could not read the renovate-version default from the action at ${ref}"
+            exit 1
+          fi
+          echo "validating renovate-config.js with renovate@${version} (default of action ${ref})"
           npx -y -p "renovate@${version}" renovate-config-validator --strict renovate-config.js

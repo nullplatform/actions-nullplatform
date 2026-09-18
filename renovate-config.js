@@ -52,7 +52,9 @@ module.exports = {
   // a PR nobody asked for.
   // No dockerfile manager: the FROM line belongs to the base-image owner, who bumps it with Dependabot
   // (package-ecosystem: docker, label base-image). Two bots on one line means two PRs for one change.
-  enabledManagers: ['custom.regex', 'gomod', 'npm', 'github-actions'],
+  // No github-actions manager and no manager that writes under .github/workflows: that would
+  // require the App to hold Workflows: write across the org. Dependabot owns those files.
+  enabledManagers: ['custom.regex', 'gomod', 'npm'],
   postUpdateOptions: ['gomodTidy'],
   // Nobody watches these repos and there is no CODEOWNERS: without this a PR notifies no one.
   reviewers: ['gdrojas'],
@@ -85,18 +87,10 @@ module.exports = {
   semanticCommitScope: 'deps',
 
   customManagers: [
-    // Renovate keeps its own version current: the action pulls ghcr.io/renovatebot/renovate:<renovate-version>.
-    { customType: 'regex', managerFilePatterns: ['/^\\.github/workflows/renovate\\.ya?ml$/'],
-      matchStrings: ['renovate-version:\\s*(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)'],
-      depNameTemplate: 'ghcr.io/renovatebot/renovate', datasourceTemplate: 'docker', versioningTemplate: 'docker' },
     // np is installed from its CDN; releases on GitHub are stale, tags are current.
     { customType: 'regex', managerFilePatterns: DOCKERFILES,
       matchStrings: ['ARG NP_VERSION=v?(?<currentValue>[0-9][0-9.]*)'],
       depNameTemplate: 'nullplatform/cli', datasourceTemplate: 'github-tags', extractVersionTemplate: '^v?(?<version>.*)$' },
-    // Go toolchain that compiles the CDN binaries (np, np-agent): stdlib CVEs live here.
-    { customType: 'regex', managerFilePatterns: ['/^\\.github/workflows/.+\\.ya?ml$/'],
-      matchStrings: ['go-version:\\s*[\'"]?(?<currentValue>1\\.[0-9.]+)[\'"]?'],
-      depNameTemplate: 'go', datasourceTemplate: 'golang-version' },
     // np-nginx's base pin (main-config.json base_version) is managed by that repo's own renovate.json: it changes with its Dockerfile.
     // fluent-bit on the customer AMI: install.sh honours FLUENT_BIT_RELEASE_VERSION; releases are tagged vX.Y.Z.
     { customType: 'regex', managerFilePatterns: ['/(^|/)main-config\\.json$/'],
@@ -124,10 +118,6 @@ module.exports = {
   ],
 
   packageRules: [
-    // github-actions: only in this repo for now (the renovate action SHA and the reusables' own uses:).
-    { matchManagers: ['github-actions'], enabled: false },
-    { matchManagers: ['github-actions'], matchRepositories: ['nullplatform/actions-nullplatform'], enabled: true, groupName: 'github actions' },
-    { matchDepNames: ['ghcr.io/renovatebot/renovate', 'renovatebot/github-action'], groupName: 'renovate' },
     { matchManagers: ['gomod'], groupName: 'go modules' },
     { matchManagers: ['npm'], groupName: 'npm packages' },
     // Already covered by Dependabot there.
@@ -140,9 +130,6 @@ module.exports = {
     // compatibility decision, not a dependency bump.
     { matchUpdateTypes: ['major'], enabled: false },
 
-    // Except Renovate's own: it ships a major every few months and drops config options in them.
-    // With majors off nobody would ever hear about it. The PR still needs a review to merge.
-    { matchDepNames: ['ghcr.io/renovatebot/renovate', 'renovatebot/github-action'], matchUpdateTypes: ['major'], enabled: true },
 
     // Ceilings measured in Sep 2026. Raising either one is a policy change.
     // Helm 4 carries breaking changes; 3.22.0 already scans clean.

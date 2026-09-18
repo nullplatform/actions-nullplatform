@@ -1,0 +1,20 @@
+version: 2
+
+# Dependabot owns everything under .github/workflows, including the Renovate action that carries
+# the Renovate version. Renovate does not touch these files: writing them would mean granting its
+# App "Workflows: write" over every repository in the organization.
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    commit-message:
+      prefix: "fix"
+      include: "scope"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    labels:
+      - "dependencies"
