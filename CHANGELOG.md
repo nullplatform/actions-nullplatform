@@ -1,5 +1,53 @@
 # Changelog
 
+## [1.5.0](https://github.com/nullplatform/actions-nullplatform/compare/v1.4.0...v1.5.0) (2026-09-18)
+
+
+### Features
+
+* **ci:** conformance also checks the release App reaches the repo ([977f980](https://github.com/nullplatform/actions-nullplatform/commit/977f980314405fe22f8c0cf68be4d3d31aa82c07))
+* **ci:** valkey back in the digest; release-conformance section for public scopes-*/services-* ([d8ffd21](https://github.com/nullplatform/actions-nullplatform/commit/d8ffd21ccdaf090bd8d0513cbadcbbe2d8791acd))
+* **renovate:** extend dependency coverage ([622badc](https://github.com/nullplatform/actions-nullplatform/commit/622badcd695a100009d98fd7786e7252bde7b3df))
+* **renovate:** extend dependency coverage ([30f37a6](https://github.com/nullplatform/actions-nullplatform/commit/30f37a6a43b85ff306c0c1a0b2f0a8c38907917f))
+* **renovate:** let Renovate maintain its own version and the actions of this repo ([9bb197c](https://github.com/nullplatform/actions-nullplatform/commit/9bb197c08eb8ad23798dd8dff405970d9f520245))
+* **renovate:** replace the in-house bumper with self-hosted Renovate ([01e2581](https://github.com/nullplatform/actions-nullplatform/commit/01e2581a5895d6ff9a476a88c572226209270427))
+* **renovate:** weekly bumps for pinned binaries via self-hosted Renovate ([abb41b5](https://github.com/nullplatform/actions-nullplatform/commit/abb41b590f1550315eb6747695298b707aac56e6))
+* **slack:** daily digest of bot PRs waiting for merge ([9770276](https://github.com/nullplatform/actions-nullplatform/commit/9770276bc3e19fae54dbeb6c22da547f1b5cda0b))
+* **slack:** daily digest of bot PRs waiting for merge ([65e2553](https://github.com/nullplatform/actions-nullplatform/commit/65e2553780f652d9698035c51341b5b4ccec80e8))
+* **vuln-bump:** abrir los PRs y reportar a Slack con los links ([d6bd113](https://github.com/nullplatform/actions-nullplatform/commit/d6bd113fc14d701a0232f62f988c29d7a856d2e2))
+* **vuln-bump:** discover the pins instead of declaring them ([4f36fd4](https://github.com/nullplatform/actions-nullplatform/commit/4f36fd4894255039990f121c95a1aaeb4c29520f))
+* **vuln-bump:** resolver de bumps minimos seguros, en dry-run ([4147d36](https://github.com/nullplatform/actions-nullplatform/commit/4147d3680e5808d6adb4fbbdc1fbbf7e0fa04ce1))
+
+
+### Bug Fixes
+
+* **auto-merge:** resolve the release PR on workflow_run and refuse the gated pull_request path ([6677f38](https://github.com/nullplatform/actions-nullplatform/commit/6677f38df1c2301973116c50d1839a1b36162c90))
+* **auto-merge:** resolve the release PR on workflow_run and refuse the gated pull_request path ([efdbf2c](https://github.com/nullplatform/actions-nullplatform/commit/efdbf2ca474b0cd26145f330ceebe17305aca36e))
+* **ci:** dependabot owns the workflow files so Renovate needs no Workflows permission ([22955fd](https://github.com/nullplatform/actions-nullplatform/commit/22955fd1f6d47ff4499c36b5e96f4d0945543122))
+* **ci:** dependabot owns the workflow files, including the renovate action ([8814bd0](https://github.com/nullplatform/actions-nullplatform/commit/8814bd0b6707c104c743bd7a5370c700b8c77c13))
+* **ci:** renovate nginx pin and log_level; digest with valkey and release conformance ([a744f80](https://github.com/nullplatform/actions-nullplatform/commit/a744f80a3835cacf18e499561af6dd0e573ef2ad))
+* **digest:** biweekly cadence and services-valkey out of scope ([d0726e3](https://github.com/nullplatform/actions-nullplatform/commit/d0726e361d6872764340da362456918f09f76519))
+* **digest:** read SLACK_SECURITY_URL and add a dry_run input ([be4fc18](https://github.com/nullplatform/actions-nullplatform/commit/be4fc1833fc79584d4f8bbaf45f2c5ab93fa42d1))
+* **digest:** SLACK_SECURITY_URL, biweekly cadence, dry_run, valkey out ([a902385](https://github.com/nullplatform/actions-nullplatform/commit/a90238579ca201388d40175af5ab5c4789a19061))
+* **ecr-security-scan:** resolve the tag by version shape + push date ([9577ca7](https://github.com/nullplatform/actions-nullplatform/commit/9577ca7c676d94915c252c32c0b7f02ca3a68f2f))
+* **ecr-security-scan:** resolver el tag por forma de versión + fecha de push ([5d8dd2e](https://github.com/nullplatform/actions-nullplatform/commit/5d8dd2ec2476febc4ed28a25c6f4781dd2970c53))
+* **renovate:** autodiscover only scopes-*, services-* and the fixed set of image repos ([db3e19f](https://github.com/nullplatform/actions-nullplatform/commit/db3e19fe3ff75d46053efa1ba4bd3930e313624f))
+* **renovate:** autodiscover only scopes-*, services-* and the fixed set of image repos ([65f844c](https://github.com/nullplatform/actions-nullplatform/commit/65f844c9f76fe3155e826a94b2d384601f650822))
+* **renovate:** branch prefix that passes the org's branch-validation ([bb07631](https://github.com/nullplatform/actions-nullplatform/commit/bb07631814d05b9b19c83cb9edbecc9c14f82119))
+* **renovate:** drop the renovate-version pin; the action decides it ([216f96d](https://github.com/nullplatform/actions-nullplatform/commit/216f96d1aa7cb49a383949ef08a8dbf6a3e64146))
+* **renovate:** make dry-run actually reach Renovate ([b12482c](https://github.com/nullplatform/actions-nullplatform/commit/b12482cd1db83450c89bb901f4f4ff531346dd56))
+* **renovate:** make dry-run reach Renovate; branch prefix that passes branch-validation ([5e13030](https://github.com/nullplatform/actions-nullplatform/commit/5e13030308327f92be29012fc9818cf83c69161d))
+* **renovate:** no manager writes under .github/workflows ([0c92f34](https://github.com/nullplatform/actions-nullplatform/commit/0c92f340e35e97bdd0ad6cafbbd5c234599a4605))
+* **renovate:** np-nginx base pin moves to its repo config; allow its tag-bump command ([40211d3](https://github.com/nullplatform/actions-nullplatform/commit/40211d342525350f50197db7cb38d224ab0f2699))
+* **renovate:** propose Renovate's own major so the self-update does not stall on 44.x ([fa52256](https://github.com/nullplatform/actions-nullplatform/commit/fa522563abca473045eefc3d481843ea35ed202a))
+* **renovate:** read the App secrets under the names they were created with ([b7186aa](https://github.com/nullplatform/actions-nullplatform/commit/b7186aaed44217af03ed5f5f5dd563fc81b6de46))
+* **renovate:** read the App secrets under the names they were created with ([ad97b26](https://github.com/nullplatform/actions-nullplatform/commit/ad97b262df7fe671f90b3eaa83e6def7a8f98013))
+* **renovate:** rebase the nginx pin change on the allowlist ([9d38e37](https://github.com/nullplatform/actions-nullplatform/commit/9d38e37296b9f0031d24e2dac3405be43962e3f8))
+* **renovate:** run on the 2nd and 16th, the day after the base image rebuild ([8103626](https://github.com/nullplatform/actions-nullplatform/commit/810362601815917e6627467edc55c35221d71698))
+* **renovate:** use the org-level SLACK_SECURITY_WEBHOOK ([ad2e8a6](https://github.com/nullplatform/actions-nullplatform/commit/ad2e8a68787188a41e8b2a82069473ce53a59bb8))
+* **vuln-bump:** pass repo-controlled data as argv, never as a shell string ([98ec78f](https://github.com/nullplatform/actions-nullplatform/commit/98ec78fef6b94ebfaf6429a4125b0c34201a9056))
+* **vuln-bump:** quoting hacia el shell, aislamiento por repo, rate limit y cache ([04a4443](https://github.com/nullplatform/actions-nullplatform/commit/04a444332d6284fa064d28d48a786ef2a7ce3874))
+
 ## [1.4.0](https://github.com/nullplatform/actions-nullplatform/compare/v1.3.2...v1.4.0) (2026-09-14)
 
 
