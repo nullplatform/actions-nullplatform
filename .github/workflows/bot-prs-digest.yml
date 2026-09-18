@@ -97,7 +97,7 @@ jobs:
             echo "release App reaches $(wc -l < app_repos.txt | tr -d ' ') repos of the org"
           else
             : > app_repos.txt
-            echo "::warning::APP_RELEASE_ID/APP_RELEASE_PRIVATE_KEY unavailable: App coverage not checked"
+            echo "::warning::APP_RELEASE_PRIVATE_KEY unavailable: App coverage not checked"
           fi
           : > conformance.tsv
           while read -r repo; do
