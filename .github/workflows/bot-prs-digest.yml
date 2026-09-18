@@ -67,8 +67,8 @@ jobs:
           echo "count=$(jq length prs.json)" >> "$GITHUB_OUTPUT"
           jq -r '.[] | "  \(.repository.name)#\(.number) [\(.bot)] \(.title)"' prs.json
 
-      # Core's rule: every scopes-*/services-* repo releases through release-publish-oci and merges its
-      # release PR itself. A repo listed here needs the standard set, not a hand-merged release PR.
+      # Core's rule: every public scopes-*/services-* repo releases through release-publish-oci and merges
+      # its release PR itself. A repo listed here needs the standard set, not a hand-merged release PR.
       - name: Release conformance of scopes-*/services-*
         id: conformance
         env:
@@ -77,7 +77,7 @@ jobs:
           IGNORE: ${{ env.CONFORMANCE_IGNORE }}
         run: |
           set -euo pipefail
-          gh api --paginate "orgs/${OWNER}/repos?per_page=100&type=all" --jq '.[] | select(.archived == false) | .name' \
+          gh api --paginate "orgs/${OWNER}/repos?per_page=100&type=all" --jq '.[] | select(.archived == false and .visibility == "public") | .name' \
             | grep -E '^(scopes|services)-' | grep -vE "${IGNORE}" | sort > repos.txt
           : > conformance.tsv
           while read -r repo; do
@@ -123,7 +123,7 @@ jobs:
             | (if ($bad|length) > 0 then
                 [{type:"header", text:{type:"plain_text", text:("Repos without the standard auto release: " + ($bad|length|tostring) + " of " + $total), emoji:true}},
                  {type:"section", text:{type:"mrkdwn", text:(($bad | map("• *" + .repo + "*: " + .problems) | join("\n")) | .[0:2900])}},
-                 {type:"context", elements:[{type:"mrkdwn", text:"Core rule: every scopes-*/services-* repo releases with release-publish-oci and merges its release PR from workflow_run. Give these the standard set instead of merging their release PRs by hand."}]}]
+                 {type:"context", elements:[{type:"mrkdwn", text:"Core rule: every public scopes-*/services-* repo releases with release-publish-oci and merges its release PR from workflow_run. Give these the standard set instead of merging their release PRs by hand."}]}]
               else [] end) as $confblocks
             | {blocks: ($prblocks + $confblocks)}' > slack.json
           if [ "${DRY_RUN}" = "true" ]; then echo "DRY RUN - would post:"; jq -r '.blocks[] | .text.text // .elements[0].text' slack.json; exit 0; fi
