@@ -36,17 +36,17 @@ jobs:
       - name: Are the secrets configured?
         env:
           WEBHOOK: ${{ secrets.SLACK_SECURITY_URL }}
-          APP_ID: ${{ secrets.RENOVATE_APP_ID }}
+          APP_KEY: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
         run: |
           [ -n "${WEBHOOK}" ] || { echo "::error::SLACK_SECURITY_URL is not configured in this repo"; exit 1; }
-          [ -n "${APP_ID}" ] || { echo "::error::RENOVATE_APP_ID is not available: private repos would be invisible to the search"; exit 1; }
+          [ -n "${APP_KEY}" ] || { echo "::error::RENOVATE_APP_PRIVATE_KEY is not available: private repos would be invisible to the search"; exit 1; }
 
       # The Renovate App is installed on every repo with an image: its token sees the private ones too.
       - name: App token
         id: app
         uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ secrets.RENOVATE_APP_ID }}
+          client-id: Iv23liSjqC5OQnkfqmrv
           private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
 
@@ -57,7 +57,7 @@ jobs:
         continue-on-error: true
         uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ secrets.APP_RELEASE_ID }}
+          client-id: Iv23lig0dHARRXDLhNxf
           private-key: ${{ secrets.APP_RELEASE_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
 
