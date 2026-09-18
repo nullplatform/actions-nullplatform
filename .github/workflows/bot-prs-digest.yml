@@ -50,6 +50,17 @@ jobs:
           private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
 
+      # Auto release also needs the release App to reach the repo: with the caller in place but the App
+      # missing, the run starts and cannot merge. continue-on-error: a missing secret must not kill the digest.
+      - name: Release App token
+        id: release_app
+        continue-on-error: true
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.APP_RELEASE_ID }}
+          private-key: ${{ secrets.APP_RELEASE_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
       - name: Collect open bot PRs
         id: collect
         env:
@@ -75,10 +86,19 @@ jobs:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           OWNER: ${{ github.repository_owner }}
           IGNORE: ${{ env.CONFORMANCE_IGNORE }}
+          RELEASE_TOKEN: ${{ steps.release_app.outputs.token }}
         run: |
           set -euo pipefail
           gh api --paginate "orgs/${OWNER}/repos?per_page=100&type=all" --jq '.[] | select(.archived == false and .visibility == "public") | .name' \
             | grep -E '^(scopes|services)-' | grep -vE "${IGNORE}" | sort > repos.txt
+          # What the release App installation actually reaches. Empty file = we could not ask.
+          if [ -n "${RELEASE_TOKEN}" ]; then
+            GH_TOKEN="${RELEASE_TOKEN}" gh api --paginate /installation/repositories --jq '.repositories[].name' | sort > app_repos.txt
+            echo "release App reaches $(wc -l < app_repos.txt | tr -d ' ') repos of the org"
+          else
+            : > app_repos.txt
+            echo "::warning::APP_RELEASE_ID/APP_RELEASE_PRIVATE_KEY unavailable: App coverage not checked"
+          fi
           : > conformance.tsv
           while read -r repo; do
             status=$(gh api -i "repos/${OWNER}/${repo}/contents/.github/workflows" 2>/dev/null | head -1 | awk '{print $2}' || true)
@@ -90,6 +110,7 @@ jobs:
             grep -qE 'actions-nullplatform/.github/workflows/release(-publish-oci)?\.yml' <<< "${release}" || problems+=("no standard release.yml")
             if [ -z "${caller}" ]; then problems+=("no auto-merge caller")
             elif ! grep -q 'workflow_run' <<< "${caller}"; then problems+=("caller still on pull_request"); fi
+            if [ -s app_repos.txt ] && ! grep -qx "${repo}" app_repos.txt; then problems+=("release App not installed"); fi
             [ "${#problems[@]}" -eq 0 ] || printf '%s\t%s\n' "${repo}" "$(IFS=,; echo "${problems[*]}")" >> conformance.tsv
           done < repos.txt
           jq -R -s 'split("\n") | map(select(length > 0) | split("\t") | {repo: .[0], problems: .[1]})' conformance.tsv > conformance.json
@@ -123,7 +144,7 @@ jobs:
             | (if ($bad|length) > 0 then
                 [{type:"header", text:{type:"plain_text", text:("Repos without the standard auto release: " + ($bad|length|tostring) + " of " + $total), emoji:true}},
                  {type:"section", text:{type:"mrkdwn", text:(($bad | map("• *" + .repo + "*: " + .problems) | join("\n")) | .[0:2900])}},
-                 {type:"context", elements:[{type:"mrkdwn", text:"Core rule: every public scopes-*/services-* repo releases with release-publish-oci and merges its release PR from workflow_run. Give these the standard set instead of merging their release PRs by hand."}]}]
+                 {type:"context", elements:[{type:"mrkdwn", text:"Core rule: every public scopes-*/services-* repo releases with release-publish-oci and merges its release PR from workflow_run. A repo needs the standard workflows and the release App installed; without the App the caller runs and cannot merge."}]}]
               else [] end) as $confblocks
             | {blocks: ($prblocks + $confblocks)}' > slack.json
           if [ "${DRY_RUN}" = "true" ]; then echo "DRY RUN - would post:"; jq -r '.blocks[] | .text.text // .elements[0].text' slack.json; exit 0; fi
