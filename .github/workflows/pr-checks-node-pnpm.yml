@@ -94,8 +94,6 @@ jobs:
           if [ -n "$CHANGED_SINCE" ]; then ARGS+=(--changed "$CHANGED_SINCE"); fi
           # A shard can end up with no test files once `--changed` has filtered the suite.
           if [ -n "$SHARD" ]; then ARGS+=(--shard "$SHARD" --passWithNoTests); fi
-          if [ ${#ARGS[@]} -eq 0 ]; then
-            pnpm test
-          else
-            pnpm test -- "${ARGS[@]}"
-          fi
+          # No `--` separator: pnpm forwards it verbatim and vitest then reads everything
+          # after it as positional filters, so the flags would be ignored.
+          pnpm test "${ARGS[@]}"
