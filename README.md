@@ -49,7 +49,7 @@ This repository provides reusable GitHub Actions workflows for CI/CD, security s
 | [Changelog and Release](#changelog-and-release) | 📦 Release & Changelog | Automated version bumping and changelog generation |
 | [tofu-release](#tofu-release) | 📦 Release & Changelog | Creates releases for Terraform modules with version updates |
 | [release-publish-oci](#release-publish-oci) | 📦 Release & Changelog | Chained release: release-please, ECR image publish, artifact registration, release metadata |
-| [publish-test-image-oci](#publish-test-image-oci) | 📦 Release & Changelog | Test image from a branch or PR: ECR push with a test- tag and a test artifact, no release |
+| [publish-test-image-oci](#publish-test-image-oci) | 📦 Release & Changelog | Test image from a branch or PR: ECR push with a test- tag, registered as a revision of the release artifact, no release |
 | [register-oci-artifact](#register-oci-artifact) | 📦 Release & Changelog | Registers a pushed image as a nullplatform oci_image artifact (used by the two above) |
 | [tofu-pre-release](#tofu-pre-release) | 📦 Release & Changelog | Previews changelog in pull requests before release |
 | [readme-ai-generator-v2](#readme-ai-generator-v2) | 📚 Documentation | AI-powered README generation for projects |
@@ -481,12 +481,14 @@ jobs:
 
 Builds a test image from the branch it is dispatched on (or from a same-repo pull request), pushes it to ECR with the tag `test-<branch-slug>-<short-sha>`, and registers it as an `oci_image` artifact so it can go into a package version and be rolled out to a test scope. No release-please, no git tag, no GitHub release, never `latest`. The run's job summary lists the image, digest, pinned reference, registry/repository, artifact ID and revision ID.
 
-A test build can't be mistaken for a release:
+A test build registers exactly where a release does: the same owner (`NP_ARTIFACT_NRN`), the same registry and repository, and the same default visibility (`organization=*`). Artifacts are unique on (owner NRN, registry, repository), so a test build is one more revision of the release artifact. The image is already in the public registry, and the artifact is as visible as the image.
 
-- The tag always starts with `test-` and never contains a dot, so it never looks like a version to `docker-build-push-ecr` or `ecr-security-scan`. Release tags must never start with `test-`.
-- The artifact is owned by the `NP_TEST_ARTIFACT_NRN` variable, which must differ from `NP_ARTIFACT_NRN`. Artifacts are unique on (owner NRN, registry, repository), so test builds become revisions of a separate artifact and never the newest revision of the release artifact. That newest revision is what the UI's **Existing artifact** picker and tag-less lookups default to.
-- The revision carries `com.nullplatform.build.type=test`, `com.nullplatform.build.branch` and `com.nullplatform.build.run` annotations, plus `org.opencontainers.image.source` and `org.opencontainers.image.revision`.
-- The artifact is visible to its owner NRN only, unless `artifact_visible_to` adds NRNs. `organization=*` is refused.
+A test revision is told apart from a release by:
+
+- The tag, which always starts with `test-` and never contains a dot, so it never looks like a version to `docker-build-push-ecr` or `ecr-security-scan`. Release tags must never start with `test-`.
+- The `com.nullplatform.build.type=test`, `com.nullplatform.build.branch` and `com.nullplatform.build.run` annotations, next to `org.opencontainers.image.source` and `org.opencontainers.image.revision`.
+
+Until the next release registers, the test revision is the artifact's newest one: the UI's **Existing artifact** picker and tag-less lookups default to it, and a package pinning the artifact sees it as the available update. Pin releases by tag or digest where that matters.
 
 Fork pull requests and `pull_request_target` are refused, so fork code never runs with push credentials. ECR Public has no lifecycle policies and artifacts can't be deleted, so test tags stay until someone removes them (`aws ecr-public batch-delete-image`).
 
@@ -502,17 +504,17 @@ Fork pull requests and `pull_request_target` are refused, so fork code never run
 | ecr_registry | ECR registry URL prefix | No | public.ecr.aws/nullplatform |
 | aws_region | AWS region for ECR | No | us-east-1 |
 | build_args | Docker build arguments (newline-separated) | No | '' |
-| register_artifact | Register the image as an artifact owned by `NP_TEST_ARTIFACT_NRN` | No | true |
-| artifact_visible_to | Extra NRNs that can use the test artifact, space or comma separated | No | '' (owner NRN only) |
+| register_artifact | Register the image as a revision of the artifact owned by `NP_ARTIFACT_NRN` | No | true |
+| artifact_visible_to | Visibility selector for the registered artifact (same default as `release-publish-oci`) | No | organization=* |
 | np_cli_version | np CLI version/channel for artifact registration | No | alpha |
 
 **Secrets**
 - `aws_role_arn` (required): AWS IAM Role ARN for OIDC auth against ECR
-- `artifact_np_api_key`: nullplatform API key allowed to create artifacts at `NP_TEST_ARTIFACT_NRN` (required while `register_artifact` is true)
+- `artifact_np_api_key`: nullplatform API key allowed to create artifacts at `NP_ARTIFACT_NRN`, the same one `release-publish-oci` uses (required while `register_artifact` is true)
 
 **Outputs**: `image_tag`, `image_digest`, `artifact_id`, `artifact_revision_id`.
 
-Reads the `NP_TEST_ARTIFACT_NRN` and `NP_ARTIFACT_NRN` repository/organization variables, and requires the caller to grant `contents: read` and `id-token: write`. A preflight job checks the permissions and the artifact wiring before anything is built.
+Reads the `NP_ARTIFACT_NRN` repository/organization variable (the one `release-publish-oci` reads), and requires the caller to grant `contents: read` and `id-token: write`. A preflight job checks the permissions and the artifact wiring before anything is built.
 
 **Usage**
 
