@@ -1,0 +1,409 @@
+name: code-review-command
+
+# On-demand review tiers, asked for in a PR comment: `@claude <question>` and
+# `@claude deep`.
+#
+# Callers get ONE call for both tiers. This workflow decides which command was
+# asked for, who is allowed to ask, and which PR it applies to — that is all
+# mechanism, so it lives here rather than being repeated as an `if:` per job per
+# repo. Today each repo carries nine near-identical condition blocks; this is the
+# one place they collapse into.
+#
+# What stays with the caller: the prompt files, since what a good answer looks
+# like is the repo's own business.
+#
+# `@claude fix` is deliberately NOT here. It needs `contents: write`, it pushes a
+# branch and opens a PR, and it runs package managers over PR-head code — a
+# different risk conversation that deserves its own review.
+
+on:
+  workflow_call:
+    inputs:
+      qa_prompt_file:
+        description: 'Path in the CALLING repo to the prompt for answering a question.'
+        required: true
+        type: string
+      deep_prompt_file:
+        description: 'Path in the CALLING repo to the prompt for a deep review.'
+        required: true
+        type: string
+      allowed_associations:
+        description: |
+          Comma-separated author_association values permitted to spend the budget.
+          Anyone else is ignored. Note GitHub reports NONE / FIRST_TIME_CONTRIBUTOR /
+          CONTRIBUTOR for people outside the repo, so the default keeps drive-by
+          commenters from starting a paid run.
+        required: false
+        type: string
+        default: 'OWNER,MEMBER,COLLABORATOR'
+      qa_model:
+        required: false
+        type: string
+        default: 'sonnet'
+      qa_max_turns:
+        required: false
+        type: number
+        default: 10
+      qa_max_budget_usd:
+        required: false
+        type: string
+        default: '2.00'
+      qa_allowed_tools:
+        description: 'The Q&A tier posts its own answer, so it needs `gh pr comment`.'
+        required: false
+        type: string
+        default: 'Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Read,Glob,Grep'
+      deep_model:
+        required: false
+        type: string
+        default: 'opus'
+      deep_max_turns:
+        required: false
+        type: number
+        default: 30
+      deep_max_budget_usd:
+        required: false
+        type: string
+        default: '5.00'
+      deep_allowed_tools:
+        description: 'The deep tier writes to a file and this workflow posts it, so it needs Write, not `gh pr comment`.'
+        required: false
+        type: string
+        default: 'Bash(gh pr diff:*),Bash(gh pr view:*),Read,Glob,Grep,Write'
+      node_version_file:
+        required: false
+        type: string
+        default: '.node-version'
+      scripts_ref:
+        description: 'Override the ref shared scripts come from. Leave empty to match the ref the caller pinned.'
+        required: false
+        type: string
+        default: ''
+    secrets:
+      claude_code_oauth_token:
+        description: 'OAuth token for claude-code-action.'
+        required: true
+    outputs:
+      command:
+        description: 'qa | deep | (empty when the comment asked for nothing, or the commenter may not ask).'
+        value: ${{ jobs.detect.outputs.command }}
+
+jobs:
+  detect:
+    name: Read the request
+    runs-on: ubuntu-24.04
+    permissions: {}
+    outputs:
+      command: ${{ steps.parse.outputs.command }}
+      pr_number: ${{ steps.parse.outputs.pr_number }}
+    steps:
+      - name: Work out what was asked, and by whom
+        id: parse
+        # Every value here is attacker-controlled: a comment body is whatever
+        # someone typed. It reaches the shell only through env, is never echoed
+        # back, and only a fixed token ever leaves this step.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          REVIEW_BODY: ${{ github.event.review.body }}
+          COMMENT_ASSOC: ${{ github.event.comment.author_association }}
+          REVIEW_ASSOC: ${{ github.event.review.author_association }}
+          COMMENT_USER_TYPE: ${{ github.event.comment.user.type }}
+          REVIEW_USER_TYPE: ${{ github.event.review.user.type }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_IS_PR: ${{ github.event.issue.pull_request.url }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          ALLOWED: ${{ inputs.allowed_associations }}
+        run: |
+          set -euo pipefail
+
+          # One writer, via the exit trap: every path below leaves through it, so
+          # "ignore this comment" is simply the default empty command rather than a
+          # second write that happens to land last.
+          command=""
+          pr_number=""
+          emit() {
+            {
+              echo "command=${command}"
+              echo "pr_number=${pr_number}"
+            } >>"$GITHUB_OUTPUT"
+          }
+          trap emit EXIT
+
+          case "$EVENT_NAME" in
+            issue_comment)
+              # `issue_comment` fires for issues too; only PRs carry this url.
+              [ -n "$ISSUE_IS_PR" ] || { echo "Not a pull request — ignoring."; exit 0; }
+              body="$COMMENT_BODY"; assoc="$COMMENT_ASSOC"
+              user_type="$COMMENT_USER_TYPE"; number="$ISSUE_NUMBER" ;;
+            pull_request_review_comment)
+              body="$COMMENT_BODY"; assoc="$COMMENT_ASSOC"
+              user_type="$COMMENT_USER_TYPE"; number="$PR_NUMBER" ;;
+            pull_request_review)
+              body="$REVIEW_BODY"; assoc="$REVIEW_ASSOC"
+              user_type="$REVIEW_USER_TYPE"; number="$PR_NUMBER" ;;
+            *)
+              echo "::error::code-review-command was called on '$EVENT_NAME'. Call it on issue_comment, pull_request_review_comment or pull_request_review."
+              exit 1 ;;
+          esac
+
+          # A bot repeating the trigger text must not start a run.
+          if [ "$user_type" = "Bot" ]; then
+            echo "Comment is from a bot — ignoring."
+            exit 0
+          fi
+
+          # The PR number goes into a git ref later, so it must be digits only.
+          case "$number" in
+            ''|*[!0-9]*) echo "::error::Could not read a numeric PR number."; exit 1 ;;
+          esac
+
+          case ",${ALLOWED}," in
+            *",${assoc},"*) ;;
+            *)
+              # Silent by design, matching how this behaves in the repos today.
+              # Saying "you may not do that" would need an ungated job to say it.
+              echo "author_association '${assoc}' may not request a review — ignoring."
+              exit 0 ;;
+          esac
+
+          # `deep` first: "@claude deep" also contains "@claude".
+          if printf '%s' "$body" | grep -qiE '(^|[[:space:]])@claude[[:space:]]+deep([[:space:]]|$)'; then
+            command=deep
+          elif printf '%s' "$body" | grep -qiE '(^|[[:space:]])@claude[[:space:]]+fix([[:space:]]|$)'; then
+            # Handled by the caller's own job, not here.
+            echo "'@claude fix' is not served by this workflow — ignoring."
+            exit 0
+          elif printf '%s' "$body" | grep -qiE '(^|[[:space:]])@claude([[:space:]]|$)'; then
+            command=qa
+          else
+            echo "No @claude request in this comment."
+            exit 0
+          fi
+
+          # The exit trap writes both; this just settles the values.
+          pr_number="$number"
+          echo "Request: ${command} on PR #${pr_number}."
+
+  qa:
+    name: Answer the question
+    needs: detect
+    if: needs.detect.outputs.command == 'qa'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
+    steps:
+      - name: Checkout the PR head
+        uses: actions/checkout@v7
+        with:
+          # The question is about the proposed code, so Read/Grep must see it —
+          # the default checkout would give the base branch instead. The number
+          # was validated as digits in `detect`.
+          ref: refs/pull/${{ needs.detect.outputs.pr_number }}/head
+          fetch-depth: 0
+
+      - name: Record start time
+        id: timer
+        run: echo "start=$(date +%s)" >>"$GITHUB_OUTPUT"
+
+      - name: Answer
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.claude_code_oauth_token }}
+          show_full_output: true
+          additional_permissions: |
+            actions: read
+          claude_args: |
+            --model ${{ inputs.qa_model }} --max-turns ${{ inputs.qa_max_turns }} --max-budget-usd ${{ inputs.qa_max_budget_usd }} --allowedTools "${{ inputs.qa_allowed_tools }}"
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR_NUMBER: ${{ needs.detect.outputs.pr_number }}
+
+            Read ${{ inputs.qa_prompt_file }} and follow it exactly.
+            Answer the question asked after "@claude" in the triggering comment.
+            Post your answer as a PR comment beginning with the marker <!-- claude-qa -->.
+
+      - name: Stamp the answer with how it ran
+        continue-on-error: true
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ needs.detect.outputs.pr_number }}
+          MODEL: ${{ inputs.qa_model }}
+          BUDGET: ${{ inputs.qa_max_budget_usd }}
+          START: ${{ steps.timer.outputs.start }}
+        run: |
+          DURATION=$(( $(date +%s) - START ))
+          BUDGET_LABEL="\$${BUDGET}"
+          COMMENT_ID=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments?per_page=100" \
+            --jq '[.[] | select(.user.login == "github-actions[bot]") | select(.body | contains("<!-- claude-qa -->"))] | last | .id')
+          [ -n "$COMMENT_ID" ] && [ "$COMMENT_ID" != "null" ] || exit 0
+          gh api "repos/${REPO}/issues/comments/${COMMENT_ID}" --jq '.body' \
+            | awk '/^<sub>⏱️/{exit} {print}' >"${RUNNER_TEMP}/qa.md"
+          printf '\n---\n<sub>⏱️ %dm %ds · %s · budget-cap: %s</sub>\n' \
+            "$(( DURATION / 60 ))" "$(( DURATION % 60 ))" "$MODEL" "$BUDGET_LABEL" \
+            >>"${RUNNER_TEMP}/qa.md"
+          gh api "repos/${REPO}/issues/comments/${COMMENT_ID}" -X PATCH -F body=@"${RUNNER_TEMP}/qa.md"
+
+  deep:
+    name: Deep Review
+    needs: detect
+    if: needs.detect.outputs.command == 'deep'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      checks: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
+    steps:
+      - name: Checkout the PR head
+        uses: actions/checkout@v7
+        with:
+          ref: refs/pull/${{ needs.detect.outputs.pr_number }}/head
+          fetch-depth: 0
+
+      - name: Resolve the ref to take shared scripts from
+        id: scripts
+        env:
+          JOB_WORKFLOW_REF: ${{ github.job_workflow_ref }}
+          OVERRIDE: ${{ inputs.scripts_ref }}
+        run: |
+          if [ -n "$OVERRIDE" ]; then
+            echo "ref=$OVERRIDE" >>"$GITHUB_OUTPUT"
+          else
+            echo "ref=${JOB_WORKFLOW_REF##*@}" >>"$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout shared review scripts
+        uses: actions/checkout@v7
+        with:
+          repository: nullplatform/actions-nullplatform
+          ref: ${{ steps.scripts.outputs.ref }}
+          path: .review-scripts
+          sparse-checkout: |
+            .github/scripts/review
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: ${{ inputs.node_version_file }}
+
+      - name: Record start time
+        id: timer
+        run: echo "start=$(date +%s)" >>"$GITHUB_OUTPUT"
+
+      - name: Summarize CI status
+        id: ci
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ needs.detect.outputs.pr_number }}
+        run: bash .review-scripts/.github/scripts/review/ci-status.sh
+
+      - name: Run the deep review
+        id: review
+        # Same reasoning as the auto tier: a review that could not be produced is a
+        # missing review, not a broken PR. The outcome steps below decide.
+        continue-on-error: true
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.claude_code_oauth_token }}
+          show_full_output: true
+          additional_permissions: |
+            actions: read
+          claude_args: |
+            --model ${{ inputs.deep_model }} --max-turns ${{ inputs.deep_max_turns }} --max-budget-usd ${{ inputs.deep_max_budget_usd }} --allowedTools "${{ inputs.deep_allowed_tools }}"
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR_NUMBER: ${{ needs.detect.outputs.pr_number }}
+            CI_STATUS: ${{ steps.ci.outputs.summary }}
+            TRIGGER: on request (@claude deep)
+            REVIEW_BODY_FILE: ${{ github.workspace }}/.claude-deep-review-body.md
+
+            Read ${{ inputs.deep_prompt_file }} and follow it exactly.
+            The triggering comment may carry instructions after "@claude deep".
+
+      - name: Classify the outcome
+        id: outcome
+        if: always()
+        env:
+          EXECUTION_FILE: ${{ steps.review.outputs.execution_file }}
+          BODY_FILE: ${{ github.workspace }}/.claude-deep-review-body.md
+          REVIEW_OUTCOME: ${{ steps.review.outcome }}
+        run: |
+          bash .review-scripts/.github/scripts/review/review-outcome.sh \
+            "$EXECUTION_FILE" "$BODY_FILE" "$REVIEW_OUTCOME"
+
+      - name: Post or update the deep review
+        id: post
+        if: always() && steps.outcome.outputs.status == 'ok'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ needs.detect.outputs.pr_number }}
+          BODY_FILE: ${{ github.workspace }}/.claude-deep-review-body.md
+        run: |
+          bash .review-scripts/.github/scripts/review/upsert-comment.sh \
+            '<!-- claude-deep-review -->' "$BODY_FILE"
+
+      - name: Say so when the review could not run
+        # Someone ASKED for this one, so silence would read as the request being lost.
+        if: always() && steps.outcome.outputs.status == 'unavailable'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ needs.detect.outputs.pr_number }}
+          REASON: ${{ steps.outcome.outputs.reason }}
+        run: |
+          {
+            echo '<!-- claude-review-unavailable -->'
+            echo
+            echo "**The deep review you asked for did not run.** $REASON"
+            echo
+            echo 'Nothing is wrong with this PR. Ask again once the limit resets.'
+          } >"${RUNNER_TEMP}/unavailable.md"
+          bash .review-scripts/.github/scripts/review/upsert-comment.sh \
+            '<!-- claude-review-unavailable -->' "${RUNNER_TEMP}/unavailable.md"
+
+      - name: Fail when the review is missing for no known reason
+        if: always() && steps.outcome.outputs.status == 'missing'
+        env:
+          REASON: ${{ steps.outcome.outputs.reason }}
+        run: |
+          echo "::error::${REASON}"
+          exit 1
+
+      - name: Stamp the review with how it ran
+        if: always() && steps.post.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ needs.detect.outputs.pr_number }}
+          MODEL: ${{ inputs.deep_model }}
+          BUDGET: ${{ inputs.deep_max_budget_usd }}
+          START: ${{ steps.timer.outputs.start }}
+        run: |
+          DURATION=$(( $(date +%s) - START ))
+          BUDGET_LABEL="\$${BUDGET}"
+          SHA=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json headRefOid --jq '.headRefOid')
+          COMMENT_ID=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments?per_page=100" \
+            --jq '[.[] | select(.user.login == "github-actions[bot]") | select(.body | contains("<!-- claude-deep-review -->"))] | last | .id')
+          [ -n "$COMMENT_ID" ] && [ "$COMMENT_ID" != "null" ] || exit 0
+          gh api "repos/${REPO}/issues/comments/${COMMENT_ID}" --jq '.body' \
+            | awk '/^<sub>⏱️/{exit} {print}' >"${RUNNER_TEMP}/deep.md"
+          # shellcheck disable=SC2016
+          printf '\n---\n<sub>⏱️ %dm %ds · %s · budget-cap: %s · reviewed [`%s`](https://github.com/%s/pull/%s/commits/%s) · %s</sub>\n' \
+            "$(( DURATION / 60 ))" "$(( DURATION % 60 ))" "$MODEL" "$BUDGET_LABEL" \
+            "${SHA:0:7}" "$REPO" "$PR_NUMBER" "$SHA" "$(date -u '+%Y-%m-%d %H:%M UTC')" \
+            >>"${RUNNER_TEMP}/deep.md"
+          gh api "repos/${REPO}/issues/comments/${COMMENT_ID}" -X PATCH -F body=@"${RUNNER_TEMP}/deep.md"
