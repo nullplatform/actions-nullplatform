@@ -73,7 +73,7 @@ jobs:
           {
             search app/dependabot                 Dependabot
             search app/renovate-app-nullplatform  Renovate
-            search app/github-actions             release-please | jq -c 'select(.title | startswith("chore(main): release"))'
+            search app/github-actions             release-please | jq -c 'select(.title | test("^chore(\\(.+\\))?: release"))'
           } | jq -s --arg re "${IMAGE_REPOS}" 'map(select(.repository.name | test($re))) | sort_by(.repository.name, .createdAt)' > prs.json
           echo "count=$(jq length prs.json)" >> "$GITHUB_OUTPUT"
           jq -r '.[] | "  \(.repository.name)#\(.number) [\(.bot)] \(.title)"' prs.json
@@ -114,9 +114,13 @@ jobs:
             # The whole family follows the shared workflows' major tag: @main takes every merge there
             # unreviewed, and an exact version silently goes stale. Any major tag counts, so a repo
             # part-way through a v1 to v2 migration is not reported as drift.
-            stray=$(printf '%s\n%s\n' "${release}" "${caller}" \
-              | grep -oE 'actions-nullplatform/\.github/workflows/[a-z-]+\.yml@[A-Za-z0-9._-]+' \
-              | grep -vE '@v[0-9]+$' | sed -E 's#.*/##' | sort -u | tr '\n' ' ')
+            stray=$(gh api "repos/${OWNER}/${repo}/contents/.github/workflows" --jq '.[].name' 2>/dev/null \
+              | while read -r wf; do
+                  gh api "repos/${OWNER}/${repo}/contents/.github/workflows/${wf}" --jq .content 2>/dev/null \
+                    | base64 -d 2>/dev/null \
+                    | grep -oE 'actions-nullplatform/\.github/workflows/[a-z-]+\.yml@[A-Za-z0-9._-]+' \
+                    | grep -vE '@v[0-9]+$' | sed -E "s#.*/#${wf}: #"
+                done | sort -u | tr '\n' ' ')
             [ -z "${stray}" ] || problems+=("not on a major tag: ${stray% }")
             [ "${#problems[@]}" -eq 0 ] || printf '%s\t%s\n' "${repo}" "$(IFS=,; echo "${problems[*]}")" >> conformance.tsv
           done < repos.txt
