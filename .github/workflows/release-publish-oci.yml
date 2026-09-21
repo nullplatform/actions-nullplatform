@@ -258,7 +258,20 @@ jobs:
           # Direct lookup first; drafts are not resolvable via releases/tags,
           # so fall back to listing (upsert also covers backfilled tags that
           # never had a release).
-          RELEASE_ID=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq '.id' 2>/dev/null || true)
+          #
+          # On a 404 (no release for this tag yet — the common case for a
+          # first-time backfill) `gh api` doesn't apply --jq to the error
+          # body, it prints the raw error JSON to stdout and exits non-zero.
+          # `$(... || true)` only swallows the exit code, so that raw JSON
+          # text used to end up IN $RELEASE_ID instead of empty, and the
+          # script would then treat a nonexistent release as found and PATCH
+          # a garbage URL built from it. Gate on the command's own exit
+          # status instead of the captured string so a failure always means
+          # "no release id", whatever ended up on stdout.
+          RELEASE_ID=""
+          if RELEASE_ID_LOOKUP=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq '.id' 2>/dev/null); then
+            RELEASE_ID="$RELEASE_ID_LOOKUP"
+          fi
           if [ -z "$RELEASE_ID" ]; then
             RELEASE_ID=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
               --jq "[.[] | select(.tag_name==\"$TAG\")][0].id // empty")
