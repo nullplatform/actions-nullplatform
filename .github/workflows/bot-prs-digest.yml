@@ -112,11 +112,12 @@ jobs:
             elif ! grep -q 'workflow_run' <<< "${caller}"; then problems+=("caller still on pull_request"); fi
             if [ -s app_repos.txt ] && ! grep -qx "${repo}" app_repos.txt; then problems+=("release App not installed"); fi
             # The whole family follows the shared workflows' major tag: @main takes every merge there
-            # unreviewed, and an exact version silently goes stale.
+            # unreviewed, and an exact version silently goes stale. Any major tag counts, so a repo
+            # part-way through a v1 to v2 migration is not reported as drift.
             stray=$(printf '%s\n%s\n' "${release}" "${caller}" \
               | grep -oE 'actions-nullplatform/\.github/workflows/[a-z-]+\.yml@[A-Za-z0-9._-]+' \
-              | grep -v '@v1$' | sed -E 's#.*/##' | sort -u | tr '\n' ' ')
-            [ -z "${stray}" ] || problems+=("not on the major tag: ${stray% }")
+              | grep -vE '@v[0-9]+$' | sed -E 's#.*/##' | sort -u | tr '\n' ' ')
+            [ -z "${stray}" ] || problems+=("not on a major tag: ${stray% }")
             [ "${#problems[@]}" -eq 0 ] || printf '%s\t%s\n' "${repo}" "$(IFS=,; echo "${problems[*]}")" >> conformance.tsv
           done < repos.txt
           jq -R -s 'split("\n") | map(select(length > 0) | split("\t") | {repo: .[0], problems: .[1]})' conformance.tsv > conformance.json
