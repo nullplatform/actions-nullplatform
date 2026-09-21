@@ -78,7 +78,7 @@ jobs:
 
       - name: Lint
         if: inputs.lint
-        uses: nullplatform/actions-nullplatform/.github/actions/run-first@main
+        uses: nullplatform/actions-nullplatform/.github/actions/run-first@v1
         with:
           candidates: 'test:static lint'
           package-manager: pnpm
