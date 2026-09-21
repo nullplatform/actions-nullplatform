@@ -103,6 +103,7 @@ module.exports = {
     arg('TOFU', 'opentofu/opentofu'),
     arg('HELM', 'helm/helm'),
     arg('KUBECTL', 'kubernetes/kubernetes'),
+    arg('FLUENT_BIT', 'fluent/fluent-bit'),
     {
       // A version written straight into the download URL, with no ARG. Five of
       // these exist today (performance-prometheus, traffic-kong-gateway-base-image)
