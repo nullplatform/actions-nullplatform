@@ -11,18 +11,23 @@ name: publish-test-image-oci
 # register-oci-artifact, so the image and the artifact look exactly like a
 # release's, apart from the markers below.
 #
-# How a test build can never be mistaken for a release:
+# A test build registers exactly where a release does: same owner
+# (NP_ARTIFACT_NRN), same registry and repository, same default visibility
+# (organization=*). An artifact is unique on (nrn, registry, repository), so a
+# test build is one more revision of the release artifact. The image is
+# already in the public registry; the artifact is as visible as the image.
+#
+# How a test revision is told apart from a release:
 #   - Image tag test-<branch-slug>-<short-sha>. The slug is [a-z0-9-] only, so
 #     the tag never contains a dot: docker-build-push-ecr's semver prefix
 #     stripping and ecr-security-scan's version-shaped tag resolution never
 #     match it. Release tags must never start with test-.
-#   - The artifact is owned by NP_TEST_ARTIFACT_NRN, which must differ from
-#     NP_ARTIFACT_NRN. An artifact is unique on (nrn, registry, repository), so
-#     test revisions land on a separate artifact: the release artifact's newest
-#     revision (what the UI's Existing artifact picker and tag-less lookups
-#     default to) stays a release.
 #   - Annotations com.nullplatform.build.type=test plus the branch and run URL.
-#   - Visibility defaults to the owner nrn only; organization=* is refused.
+#
+# Until the next release registers, the test revision is the artifact's newest
+# one: the UI's Existing artifact picker and tag-less lookups default to it,
+# and a package pinning the artifact sees it as the available update. Pin
+# releases by tag or digest where that matters.
 #
 # Caller, dispatched from the branch to test (the whole per-repo file):
 #
@@ -90,15 +95,15 @@ on:
         type: string
         default: ''
       register_artifact:
-        description: 'Register the image as an oci_image artifact owned by NP_TEST_ARTIFACT_NRN (requires artifact_np_api_key)'
+        description: 'Register the image as a revision of the oci_image artifact owned by NP_ARTIFACT_NRN (requires artifact_np_api_key)'
         required: false
         type: boolean
         default: true
       artifact_visible_to:
-        description: 'Extra NRNs that can use the test artifact, space or comma separated (empty = the owner nrn only; organization=* is refused)'
+        description: 'Visibility selector for the registered artifact (same default as release-publish-oci)'
         required: false
         type: string
-        default: ''
+        default: 'organization=*'
       np_cli_version:
         description: 'np CLI version/channel for artifact registration'
         required: false
@@ -119,10 +124,10 @@ on:
         description: 'OCI image-index digest of the test image'
         value: ${{ jobs.publish.outputs.image_digest }}
       artifact_id:
-        description: 'Test artifact id (empty when not registered)'
+        description: 'Id of the artifact the test revision was registered on (empty when not registered)'
         value: ${{ jobs.register-artifact.outputs.artifact_id }}
       artifact_revision_id:
-        description: 'Test artifact revision id (empty when not registered)'
+        description: 'Id of the test revision (empty when not registered)'
         value: ${{ jobs.register-artifact.outputs.artifact_revision_id }}
 
 permissions:
@@ -186,9 +191,7 @@ jobs:
         env:
           REGISTER: ${{ inputs.register_artifact }}
           NP_API_KEY: ${{ secrets.artifact_np_api_key }}
-          TEST_NRN: ${{ vars.NP_TEST_ARTIFACT_NRN }}
-          RELEASE_NRN: ${{ vars.NP_ARTIFACT_NRN }}
-          VISIBLE_TO: ${{ inputs.artifact_visible_to }}
+          ARTIFACT_NRN: ${{ vars.NP_ARTIFACT_NRN }}
         run: |
           # A called workflow can only narrow the caller's token; the runner only
           # exposes the token-exchange endpoint when id-token is granted.
@@ -204,23 +207,10 @@ jobs:
             echo "::error::register_artifact is true but the artifact_np_api_key secret is empty or not passed"
             exit 1
           fi
-          if [ -z "$TEST_NRN" ]; then
-            echo "::error::register_artifact is true but the NP_TEST_ARTIFACT_NRN variable is not set. Set it to an NRN other than NP_ARTIFACT_NRN, or pass register_artifact: false."
+          if [ -z "$ARTIFACT_NRN" ]; then
+            echo "::error::register_artifact is true but the NP_ARTIFACT_NRN variable is not set (the same one release-publish-oci uses), or pass register_artifact: false."
             exit 1
           fi
-          # Same owner nrn = same artifact as releases: a test revision would
-          # become the release artifact's newest revision.
-          if [ "$TEST_NRN" = "$RELEASE_NRN" ]; then
-            echo "::error::NP_TEST_ARTIFACT_NRN must differ from NP_ARTIFACT_NRN, or test builds become revisions of the release artifact"
-            exit 1
-          fi
-          IFS=', ' read -r -a SELECTORS <<< "$VISIBLE_TO"
-          for SELECTOR in "${SELECTORS[@]}"; do
-            if [ "$SELECTOR" = "organization=*" ]; then
-              echo "::error::test artifacts cannot be visible to organization=* (every organization would see them)"
-              exit 1
-            fi
-          done
           echo "artifact wiring ok"
 
   publish:
@@ -243,12 +233,12 @@ jobs:
       aws_role_arn: ${{ secrets.aws_role_arn }}
 
   register-artifact:
-    name: Register test artifact
+    name: Register test revision
     needs: [preflight, publish]
     if: ${{ inputs.register_artifact }}
     uses: ./.github/workflows/register-oci-artifact.yml
     with:
-      nrn: ${{ vars.NP_TEST_ARTIFACT_NRN }}
+      nrn: ${{ vars.NP_ARTIFACT_NRN }}
       ecr_registry: ${{ inputs.ecr_registry }}
       image_name: ${{ inputs.image_name }}
       image_tag: ${{ needs.publish.outputs.image_tag }}
@@ -280,7 +270,7 @@ jobs:
           REGISTER_RESULT: ${{ needs.register-artifact.result }}
           ARTIFACT_ID: ${{ needs.register-artifact.outputs.artifact_id }}
           REVISION_ID: ${{ needs.register-artifact.outputs.artifact_revision_id }}
-          OWNER_NRN: ${{ vars.NP_TEST_ARTIFACT_NRN }}
+          OWNER_NRN: ${{ vars.NP_ARTIFACT_NRN }}
         run: |
           IMAGE="$ECR_REGISTRY/$IMAGE_NAME"
           case "$REGISTER_RESULT" in
