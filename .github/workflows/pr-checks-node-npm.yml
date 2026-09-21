@@ -49,7 +49,7 @@ jobs:
         run: npm ci
 
       - name: Lint
-        uses: nullplatform/actions-nullplatform/.github/actions/run-first@main
+        uses: nullplatform/actions-nullplatform/.github/actions/run-first@v1
         with:
           candidates: 'test:static lint'
           package-manager: npm
