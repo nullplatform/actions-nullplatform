@@ -42,7 +42,7 @@ on:
 jobs:
   lint:
     name: Lint & Validate
-    uses: nullplatform/actions-nullplatform/.github/workflows/tofu-lint.yml@main
+    uses: ./.github/workflows/tofu-lint.yml
     with:
       skip_backend: ${{ inputs.skip_backend }}
 
@@ -61,7 +61,7 @@ jobs:
   test:
     if: ${{ inputs.run_tests && inputs.modules != '' }}
     name: Tests
-    uses: nullplatform/actions-nullplatform/.github/workflows/tofu-test.yml@main
+    uses: ./.github/workflows/tofu-test.yml
     with:
       modules: ${{ inputs.modules }}
       tofu_version: ${{ inputs.tofu_version }}
