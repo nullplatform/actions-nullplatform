@@ -150,7 +150,17 @@ jobs:
           # at its first '## Artifact' section so a backfill re-run never feeds
           # release-publish-oci's own appended metadata back in.
           if [ -n "$CHANGELOG_TAG" ]; then
-            RELEASE_BODY=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$CHANGELOG_TAG" --jq '.body // ""' 2>/dev/null || true)
+            # On a 404 (release doesn't exist yet — e.g. register-artifact
+            # runs before finalize-release creates it) `gh api` prints the
+            # raw error JSON to stdout instead of applying --jq, and exits
+            # non-zero. `$(... || true)` only swallows the exit code, so
+            # that error JSON used to end up IN $RELEASE_BODY and get
+            # shipped as the artifact's changelog. Gate on the command's own
+            # exit status instead of the captured string.
+            RELEASE_BODY=""
+            if RELEASE_BODY_LOOKUP=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$CHANGELOG_TAG" --jq '.body // ""' 2>/dev/null); then
+              RELEASE_BODY="$RELEASE_BODY_LOOKUP"
+            fi
             printf '%s' "$RELEASE_BODY" | sed '/^## Artifact/,$d' > changelog.md
             if grep -q '[^[:space:]]' changelog.md; then
               EXTRA_ARGS+=(--changelog-file changelog.md)
@@ -159,7 +169,13 @@ jobs:
           # Record the commit the image was built from (for release backfills
           # the tag's commit, not the triggering sha).
           if [ -n "$SOURCE_REF" ]; then
-            SOURCE_COMMIT=$(gh api "repos/$GITHUB_REPOSITORY/commits/$SOURCE_REF" --jq '.sha' 2>/dev/null || true)
+            # Same failure-capture hazard as the changelog lookup above: gate
+            # on exit status so a bad/missing ref never leaks an error body
+            # into the image annotation.
+            SOURCE_COMMIT=""
+            if SOURCE_COMMIT_LOOKUP=$(gh api "repos/$GITHUB_REPOSITORY/commits/$SOURCE_REF" --jq '.sha' 2>/dev/null); then
+              SOURCE_COMMIT="$SOURCE_COMMIT_LOOKUP"
+            fi
             if [ -n "$SOURCE_COMMIT" ]; then
               EXTRA_ARGS+=(--annotation "org.opencontainers.image.revision=$SOURCE_COMMIT")
             fi
