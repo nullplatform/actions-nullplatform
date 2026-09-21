@@ -114,9 +114,10 @@ jobs:
             TAG_DATE=$(aws ecr-public describe-images --repository-name "${IMAGE_NAME}" \
               --region us-east-1 --output json 2>/dev/null \
               | jq -r --arg t "${LATEST_TAG}" '.imageDetails[] | select(.imageTags // [] | index($t)) | .imagePushedAt' | head -1)
+            # Tagged pushes only, minus test-* builds (publish-test-image-oci): a test push is not a sign the repo stopped versioning.
             LAST_PUSH=$(aws ecr-public describe-images --repository-name "${IMAGE_NAME}" \
               --region us-east-1 --output json 2>/dev/null \
-              | jq -r '[.imageDetails[].imagePushedAt] | max')
+              | jq -r '[.imageDetails[] | select((.imageTags // []) as $t | ($t | length) > 0 and ($t | all(startswith("test-")) | not)) | .imagePushedAt] | max // empty')
             if [ -n "${TAG_DATE}" ] && [ -n "${LAST_PUSH}" ]; then
               GAP=$(( ( $(date -u -d "${LAST_PUSH}" +%s) - $(date -u -d "${TAG_DATE}" +%s) ) / 86400 ))
               if [ "${GAP}" -gt 120 ]; then

@@ -1,0 +1,306 @@
+name: publish-test-image-oci
+
+# Builds a TEST image from a branch (or a same-repo pull request) and
+# registers it as a nullplatform oci_image artifact, so the build can go into
+# a package version and be rolled out to a test scope before any release:
+#
+#   preflight ──▶ docker build+push ECR ──▶ register test artifact ──▶ summary
+#
+# Unlike release-publish-oci there is no release-please, no git tag, no GitHub
+# release and never a latest tag. Reuses docker-build-push-ecr and
+# register-oci-artifact, so the image and the artifact look exactly like a
+# release's, apart from the markers below.
+#
+# How a test build can never be mistaken for a release:
+#   - Image tag test-<branch-slug>-<short-sha>. The slug is [a-z0-9-] only, so
+#     the tag never contains a dot: docker-build-push-ecr's semver prefix
+#     stripping and ecr-security-scan's version-shaped tag resolution never
+#     match it. Release tags must never start with test-.
+#   - The artifact is owned by NP_TEST_ARTIFACT_NRN, which must differ from
+#     NP_ARTIFACT_NRN. An artifact is unique on (nrn, registry, repository), so
+#     test revisions land on a separate artifact: the release artifact's newest
+#     revision (what the UI's Existing artifact picker and tag-less lookups
+#     default to) stays a release.
+#   - Annotations com.nullplatform.build.type=test plus the branch and run URL.
+#   - Visibility defaults to the owner nrn only; organization=* is refused.
+#
+# Caller, dispatched from the branch to test (the whole per-repo file):
+#
+#   name: test-image
+#   on:
+#     workflow_dispatch:
+#   permissions:
+#     contents: read
+#     id-token: write
+#   jobs:
+#     test-image:
+#       uses: nullplatform/actions-nullplatform/.github/workflows/publish-test-image-oci.yml@v1
+#       with:
+#         image_name: scopes/lambda
+#       secrets:
+#         aws_role_arn: ${{ secrets.AWS_ROLE_ARN_ECR_PUSH }}
+#         artifact_np_api_key: ${{ secrets.ARTIFACT_NP_API_KEY }}
+#
+# Pull requests with a label work too: trigger the caller on
+# `pull_request: types: [labeled, synchronize]` and guard the job with
+# `if: contains(github.event.pull_request.labels.*.name, 'test-image')`.
+# Fork pull requests and pull_request_target are refused (fork code must not
+# run with registry push credentials).
+
+on:
+  workflow_call:
+    inputs:
+      image_name:
+        description: 'Image name under the registry (e.g. scopes/lambda)'
+        required: true
+        type: string
+      context:
+        description: 'Docker build context'
+        required: false
+        type: string
+        default: '.'
+      dockerfile:
+        description: 'Dockerfile path relative to context'
+        required: false
+        type: string
+        default: 'Dockerfile'
+      submodules:
+        description: 'Check out git submodules before building'
+        required: false
+        type: boolean
+        default: false
+      platforms:
+        description: 'Target platforms for the multi-arch build'
+        required: false
+        type: string
+        default: 'linux/amd64,linux/arm64'
+      ecr_registry:
+        description: 'ECR registry URL prefix'
+        required: false
+        type: string
+        default: 'public.ecr.aws/nullplatform'
+      aws_region:
+        description: 'AWS region for ECR'
+        required: false
+        type: string
+        default: 'us-east-1'
+      build_args:
+        description: 'Docker build arguments (newline-separated)'
+        required: false
+        type: string
+        default: ''
+      register_artifact:
+        description: 'Register the image as an oci_image artifact owned by NP_TEST_ARTIFACT_NRN (requires artifact_np_api_key)'
+        required: false
+        type: boolean
+        default: true
+      artifact_visible_to:
+        description: 'Extra NRNs that can use the test artifact, space or comma separated (empty = the owner nrn only; organization=* is refused)'
+        required: false
+        type: string
+        default: ''
+      np_cli_version:
+        description: 'np CLI version/channel for artifact registration'
+        required: false
+        type: string
+        default: 'alpha'
+    secrets:
+      aws_role_arn:
+        description: 'AWS IAM Role ARN for OIDC auth against ECR'
+        required: true
+      artifact_np_api_key:
+        description: 'nullplatform API key for artifact registration (required while register_artifact is true)'
+        required: false
+    outputs:
+      image_tag:
+        description: 'Test tag the image was pushed with (test-<branch-slug>-<short-sha>)'
+        value: ${{ jobs.preflight.outputs.tag }}
+      image_digest:
+        description: 'OCI image-index digest of the test image'
+        value: ${{ jobs.publish.outputs.image_digest }}
+      artifact_id:
+        description: 'Test artifact id (empty when not registered)'
+        value: ${{ jobs.register-artifact.outputs.artifact_id }}
+      artifact_revision_id:
+        description: 'Test artifact revision id (empty when not registered)'
+        value: ${{ jobs.register-artifact.outputs.artifact_revision_id }}
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  # Everything that can fail cheaply fails here, before an image is pushed.
+  preflight:
+    name: Preflight
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      sha: ${{ steps.tag.outputs.sha }}
+      branch: ${{ steps.tag.outputs.branch }}
+    steps:
+      - name: Compute test tag
+        id: tag
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_HEAD_REF: ${{ github.head_ref }}
+        run: |
+          case "$EVENT_NAME" in
+            pull_request_target)
+              echo "::error::pull_request_target is not supported: it would build untrusted pull request code with push credentials"
+              exit 1
+              ;;
+            pull_request)
+              if [ "$PR_HEAD_REPO" != "$GITHUB_REPOSITORY" ]; then
+                echo "::error::test images are not built for fork pull requests"
+                exit 1
+              fi
+              # The head commit, not the merge commit GitHub checks out by default.
+              SHA="$PR_HEAD_SHA"
+              BRANCH="$PR_HEAD_REF"
+              ;;
+            *)
+              SHA="$GITHUB_SHA"
+              BRANCH="$GITHUB_REF_NAME"
+              ;;
+          esac
+
+          # [a-z0-9-] only: no dot means no semver shape anywhere in the tag.
+          SLUG=$(printf '%s' "$BRANCH" | tr '[:upper:]' '[:lower:]' \
+            | sed -E 's/[^a-z0-9]+/-/g; s/^-+//' | cut -c1-40 | sed -E 's/-+$//')
+          TAG="test-${SLUG:-detached}-${SHA:0:7}"
+          if ! [[ "$SHA" =~ ^[0-9a-f]{40}$ && "$TAG" =~ ^test-[a-z0-9-]+-[0-9a-f]{7}$ ]]; then
+            echo "::error::could not compute a test tag (sha '$SHA', tag '$TAG')"
+            exit 1
+          fi
+          {
+            echo "tag=$TAG"
+            echo "sha=$SHA"
+            echo "branch=$BRANCH"
+          } >> "$GITHUB_OUTPUT"
+          echo "test tag: $TAG ($BRANCH @ $SHA)"
+
+      - name: Verify permissions and artifact wiring
+        env:
+          REGISTER: ${{ inputs.register_artifact }}
+          NP_API_KEY: ${{ secrets.artifact_np_api_key }}
+          TEST_NRN: ${{ vars.NP_TEST_ARTIFACT_NRN }}
+          RELEASE_NRN: ${{ vars.NP_ARTIFACT_NRN }}
+          VISIBLE_TO: ${{ inputs.artifact_visible_to }}
+        run: |
+          # A called workflow can only narrow the caller's token; the runner only
+          # exposes the token-exchange endpoint when id-token is granted.
+          if [ -z "$ACTIONS_ID_TOKEN_REQUEST_URL" ]; then
+            echo "::error::the calling workflow must grant 'id-token: write' (required for the ECR push). Add it to the caller's permissions block."
+            exit 1
+          fi
+          if [ "$REGISTER" != "true" ]; then
+            echo "register_artifact is false: image only"
+            exit 0
+          fi
+          if [ -z "$NP_API_KEY" ]; then
+            echo "::error::register_artifact is true but the artifact_np_api_key secret is empty or not passed"
+            exit 1
+          fi
+          if [ -z "$TEST_NRN" ]; then
+            echo "::error::register_artifact is true but the NP_TEST_ARTIFACT_NRN variable is not set. Set it to an NRN other than NP_ARTIFACT_NRN, or pass register_artifact: false."
+            exit 1
+          fi
+          # Same owner nrn = same artifact as releases: a test revision would
+          # become the release artifact's newest revision.
+          if [ "$TEST_NRN" = "$RELEASE_NRN" ]; then
+            echo "::error::NP_TEST_ARTIFACT_NRN must differ from NP_ARTIFACT_NRN, or test builds become revisions of the release artifact"
+            exit 1
+          fi
+          IFS=', ' read -r -a SELECTORS <<< "$VISIBLE_TO"
+          for SELECTOR in "${SELECTORS[@]}"; do
+            if [ "$SELECTOR" = "organization=*" ]; then
+              echo "::error::test artifacts cannot be visible to organization=* (every organization would see them)"
+              exit 1
+            fi
+          done
+          echo "artifact wiring ok"
+
+  publish:
+    needs: preflight
+    uses: ./.github/workflows/docker-build-push-ecr.yml
+    with:
+      image_name: ${{ inputs.image_name }}
+      # Build exactly the commit the tag names.
+      ref: ${{ needs.preflight.outputs.sha }}
+      tag: ${{ needs.preflight.outputs.tag }}
+      also_tag_latest: false
+      context: ${{ inputs.context }}
+      dockerfile: ${{ inputs.dockerfile }}
+      submodules: ${{ inputs.submodules }}
+      platforms: ${{ inputs.platforms }}
+      ecr_registry: ${{ inputs.ecr_registry }}
+      aws_region: ${{ inputs.aws_region }}
+      build_args: ${{ inputs.build_args }}
+    secrets:
+      aws_role_arn: ${{ secrets.aws_role_arn }}
+
+  register-artifact:
+    name: Register test artifact
+    needs: [preflight, publish]
+    if: ${{ inputs.register_artifact }}
+    uses: ./.github/workflows/register-oci-artifact.yml
+    with:
+      nrn: ${{ vars.NP_TEST_ARTIFACT_NRN }}
+      ecr_registry: ${{ inputs.ecr_registry }}
+      image_name: ${{ inputs.image_name }}
+      image_tag: ${{ needs.publish.outputs.image_tag }}
+      image_digest: ${{ needs.publish.outputs.image_digest }}
+      source_ref: ${{ needs.preflight.outputs.sha }}
+      annotations: |
+        com.nullplatform.build.type=test
+        com.nullplatform.build.branch=${{ needs.preflight.outputs.branch }}
+        com.nullplatform.build.run=${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      visible_to: ${{ inputs.artifact_visible_to }}
+      np_cli_version: ${{ inputs.np_cli_version }}
+    secrets:
+      np_api_key: ${{ secrets.artifact_np_api_key }}
+
+  summary:
+    name: Summary
+    needs: [preflight, publish, register-artifact]
+    if: ${{ !cancelled() && needs.publish.result == 'success' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Write job summary
+        env:
+          ECR_REGISTRY: ${{ inputs.ecr_registry }}
+          IMAGE_NAME: ${{ inputs.image_name }}
+          IMAGE_TAG: ${{ needs.publish.outputs.image_tag }}
+          DIGEST: ${{ needs.publish.outputs.image_digest }}
+          BRANCH: ${{ needs.preflight.outputs.branch }}
+          SHA: ${{ needs.preflight.outputs.sha }}
+          REGISTER_RESULT: ${{ needs.register-artifact.result }}
+          ARTIFACT_ID: ${{ needs.register-artifact.outputs.artifact_id }}
+          REVISION_ID: ${{ needs.register-artifact.outputs.artifact_revision_id }}
+          OWNER_NRN: ${{ vars.NP_TEST_ARTIFACT_NRN }}
+        run: |
+          IMAGE="$ECR_REGISTRY/$IMAGE_NAME"
+          case "$REGISTER_RESULT" in
+            success) ID_ROW="$ARTIFACT_ID"; REV_ROW="${REVISION_ID:-unavailable}"; NRN_ROW="$OWNER_NRN" ;;
+            skipped) ID_ROW="not registered (register_artifact: false)"; REV_ROW="-"; NRN_ROW="-" ;;
+            *)       ID_ROW="registration failed, see the run log"; REV_ROW="-"; NRN_ROW="-" ;;
+          esac
+          # shellcheck disable=SC2016  # backticks are markdown, not command substitution
+          {
+            echo "## Test image"
+            echo
+            echo "Test build of \`$BRANCH\` at \`$SHA\`. Not a release: do not use it outside test scopes."
+            echo
+            echo "|  |  |"
+            echo "|---|---|"
+            printf '| Image | `%s` |\n' "$IMAGE:$IMAGE_TAG"
+            printf '| Digest | `%s` |\n' "$DIGEST"
+            printf '| Pinned reference | `%s` |\n' "$IMAGE@$DIGEST"
+            printf '| Registry / Repository | `%s` / `%s` |\n' "${ECR_REGISTRY%%/*}" "${IMAGE#*/}"
+            printf '| Artifact ID | `%s` |\n' "$ID_ROW"
+            printf '| Artifact revision ID | `%s` |\n' "$REV_ROW"
+            printf '| Artifact owner NRN | `%s` |\n' "$NRN_ROW"
+          } >> "$GITHUB_STEP_SUMMARY"

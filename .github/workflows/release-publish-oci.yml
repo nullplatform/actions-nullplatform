@@ -3,9 +3,9 @@ name: release-publish-oci
 # The standard release pipeline for service repos that ship an OCI image
 # (scopes-lambda and the family of service repos modeled on it):
 #
-#   preflight ──▶ release-please ──▶ docker build+push ECR ──▶ finalize
-#                                                              (artifact register +
-#                                                               release metadata + publish)
+#   preflight ──▶ release-please ──▶ docker build+push ECR ──▶ register artifact ──▶ finalize
+#                                                                                   (release metadata +
+#                                                                                    publish)
 #
 # Everything runs in ONE workflow run, chained on `release_created`. This is
 # deliberate: release-please creates tags/releases with GITHUB_TOKEN, and
@@ -202,9 +202,35 @@ jobs:
     secrets:
       aws_role_arn: ${{ secrets.aws_role_arn }}
 
-  finalize-release:
-    name: Register artifact & finalize release
+  register-artifact:
+    name: Register artifact
     needs: [release, publish]
+    if: ${{ !cancelled() && needs.publish.result == 'success' && inputs.register_artifact }}
+    uses: ./.github/workflows/register-oci-artifact.yml
+    with:
+      nrn: ${{ vars.NP_ARTIFACT_NRN }}
+      ecr_registry: ${{ inputs.ecr_registry }}
+      image_name: ${{ inputs.image_name }}
+      # The tag docker-build-push-ecr ACTUALLY pushed (it strips monorepo
+      # prefixes), not the git tag.
+      image_tag: ${{ needs.publish.outputs.image_tag }}
+      image_digest: ${{ needs.publish.outputs.image_digest }}
+      version: ${{ inputs.existing_tag || needs.release.outputs.tag_name }}
+      # The image was built from the tag's commit, not the triggering sha
+      # (they differ on existing_tag backfills).
+      source_ref: ${{ inputs.existing_tag || needs.release.outputs.tag_name }}
+      # The release-please notes are the curated changelog.
+      changelog_release_tag: ${{ inputs.existing_tag || needs.release.outputs.tag_name }}
+      visible_to: ${{ inputs.artifact_visible_to }}
+      np_cli_version: ${{ inputs.np_cli_version }}
+    secrets:
+      np_api_key: ${{ secrets.artifact_np_api_key }}
+
+  finalize-release:
+    name: Finalize release
+    # Runs even when registration failed: the release must still get its
+    # metadata and leave draft state; the failed job keeps the run red.
+    needs: [release, publish, register-artifact]
     if: ${{ !cancelled() && needs.publish.result == 'success' }}
     runs-on: ubuntu-24.04
     env:
@@ -217,93 +243,10 @@ jobs:
       ECR_REGISTRY: ${{ inputs.ecr_registry }}
       IMAGE_NAME: ${{ inputs.image_name }}
     steps:
-      - name: Register oci_image artifact
-        id: artifact
-        if: ${{ inputs.register_artifact }}
-        env:
-          NULLPLATFORM_API_KEY: ${{ secrets.artifact_np_api_key }}
-          NP_ARTIFACT_NRN: ${{ vars.NP_ARTIFACT_NRN }}
-          VISIBLE_TO: ${{ inputs.artifact_visible_to }}
-          NP_CLI_VERSION: ${{ inputs.np_cli_version }}
-        run: |
-          set -o pipefail
-          # register_artifact is a declared choice: missing wiring is an error,
-          # not a silent skip (a typo'd secret name must not produce a green run).
-          if [ -z "$NULLPLATFORM_API_KEY" ]; then
-            echo "::error::register_artifact is true but the artifact_np_api_key secret is empty or not passed"
-            exit 1
-          fi
-          if [ -z "$NP_ARTIFACT_NRN" ]; then
-            echo "::error::register_artifact is true but the NP_ARTIFACT_NRN variable is not set"
-            exit 1
-          fi
-          curl -fsSL https://cli.nullplatform.com/install.sh | VERSION="$NP_CLI_VERSION" sh
-
-          # np artifact create expects host-only --registry; the repository is
-          # the registry path plus the image name.
-          REG_HOST="${ECR_REGISTRY%%/*}"
-          REG_PATH="${ECR_REGISTRY#*/}"
-          if [ "$REG_PATH" = "$ECR_REGISTRY" ]; then
-            REPOSITORY="$IMAGE_NAME"
-          else
-            REPOSITORY="$REG_PATH/$IMAGE_NAME"
-          fi
-
-          # Annotations are last-write-wins full replacement on the revision, so
-          # every run sends the complete set: the release-please notes as the
-          # curated changelog plus the OCI source/revision/version keys. The
-          # release body is truncated at its first '## Artifact' section so a
-          # backfill re-run never feeds our own appended metadata back in.
-          EXTRA_ARGS=()
-          RELEASE_BODY=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq '.body // ""' 2>/dev/null || true)
-          printf '%s' "$RELEASE_BODY" | sed '/^## Artifact/,$d' > changelog.md
-          if grep -q '[^[:space:]]' changelog.md; then
-            EXTRA_ARGS+=(--changelog-file changelog.md)
-          fi
-          # The image was built from the tag's commit, not the triggering sha
-          # (they differ on existing_tag backfills).
-          TAG_COMMIT=$(gh api "repos/$GITHUB_REPOSITORY/commits/$TAG" --jq '.sha' 2>/dev/null || true)
-          if [ -n "$TAG_COMMIT" ]; then
-            EXTRA_ARGS+=(--annotation "org.opencontainers.image.revision=$TAG_COMMIT")
-          fi
-
-          # stdout only into the capture: stderr stays on the run log, so CLI
-          # warnings can never corrupt the JSON parse.
-          OUTPUT=$(np artifact create \
-            --nrn "$NP_ARTIFACT_NRN" \
-            --type oci_image \
-            --registry "$REG_HOST" \
-            --repository "$REPOSITORY" \
-            --digest "$DIGEST" \
-            --tag "$IMAGE_TAG" \
-            --annotation "org.opencontainers.image.source=${{ github.server_url }}/$GITHUB_REPOSITORY" \
-            --annotation "org.opencontainers.image.version=$TAG" \
-            "${EXTRA_ARGS[@]}" \
-            --visible-to "$VISIBLE_TO" \
-            --format json) || {
-            # np prints its error as JSON on stdout; without this the failing
-            # step shows only "exit code 1" and the cause is lost.
-            echo "::error::np artifact create failed"
-            echo "$OUTPUT"
-            exit 1
-          }
-          echo "$OUTPUT"
-          ARTIFACT_ID=$(echo "$OUTPUT" | jq -r '.id // .resource_id // empty' || true)
-          if [ -z "$ARTIFACT_ID" ]; then
-            # Created (the command succeeded) but the id was not in the output:
-            # keep the run green and say so, never claim "not registered".
-            echo "::warning::artifact created but no id found in CLI output; release will say 'registered (id unavailable)'"
-            ARTIFACT_ID="registered (id unavailable)"
-          fi
-          echo "artifact_id=$ARTIFACT_ID" >> "$GITHUB_OUTPUT"
-
       - name: Append artifact metadata & publish release
-        # Runs even when registration failed: the release must still get its
-        # metadata and leave draft state; the failed step keeps the job red.
-        if: ${{ !cancelled() }}
         env:
-          ARTIFACT_ID: ${{ steps.artifact.outputs.artifact_id }}
-          REGISTER_RESULT: ${{ steps.artifact.outcome }}
+          ARTIFACT_ID: ${{ needs.register-artifact.outputs.artifact_id }}
+          REGISTER_RESULT: ${{ needs.register-artifact.result }}
         run: |
           IMAGE="$ECR_REGISTRY/$IMAGE_NAME"
           case "$REGISTER_RESULT" in

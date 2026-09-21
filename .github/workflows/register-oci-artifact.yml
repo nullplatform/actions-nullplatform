@@ -1,0 +1,200 @@
+name: register-oci-artifact
+
+# Registers an image already pushed to a registry as a nullplatform oci_image
+# artifact revision (np artifact create) and exposes the artifact and revision
+# ids. Shared by release-publish-oci (release images) and
+# publish-test-image-oci (branch test images) so both register the same way.
+#
+# Identity reminder: an artifact is unique on (nrn, registry, repository) and
+# each (digest, tag) mints a revision of it. The UI's "Existing artifact"
+# picker and tag-less lookups default to the NEWEST revision, so callers that
+# register non-release images must use a different owner nrn than releases.
+#
+# Callers reach it with the path form (uses: ./.github/workflows/...) so it
+# runs from the same commit as the calling workflow and stays version-pinned.
+
+on:
+  workflow_call:
+    inputs:
+      nrn:
+        description: 'Owner NRN of the artifact (e.g. organization=123)'
+        required: true
+        type: string
+      ecr_registry:
+        description: 'Registry URL prefix the image was pushed under'
+        required: false
+        type: string
+        default: 'public.ecr.aws/nullplatform'
+      image_name:
+        description: 'Image name under the registry (e.g. scopes/lambda)'
+        required: true
+        type: string
+      image_tag:
+        description: 'Tag the image was pushed with'
+        required: true
+        type: string
+      image_digest:
+        description: 'Image digest (sha256:...)'
+        required: true
+        type: string
+      source_ref:
+        description: 'Git ref or commit the image was built from; resolved to a SHA for org.opencontainers.image.revision (empty = omit)'
+        required: false
+        type: string
+        default: ''
+      version:
+        description: 'Value for org.opencontainers.image.version (empty = omit)'
+        required: false
+        type: string
+        default: ''
+      changelog_release_tag:
+        description: 'Use the notes of the GitHub release for this tag as the changelog (empty = no changelog)'
+        required: false
+        type: string
+        default: ''
+      annotations:
+        description: 'Extra annotations, one key=value per line'
+        required: false
+        type: string
+        default: ''
+      visible_to:
+        description: 'Visibility NRN selectors, space or comma separated (empty = API default, the owner nrn only)'
+        required: false
+        type: string
+        default: ''
+      np_cli_version:
+        description: 'np CLI version/channel (alpha carries --tag/--changelog-file/--annotation)'
+        required: false
+        type: string
+        default: 'alpha'
+    secrets:
+      np_api_key:
+        description: 'nullplatform API key allowed to create artifacts at nrn'
+        required: false
+    outputs:
+      artifact_id:
+        description: 'Registered artifact id'
+        value: ${{ jobs.register.outputs.artifact_id }}
+      artifact_revision_id:
+        description: 'Registered artifact revision id'
+        value: ${{ jobs.register.outputs.artifact_revision_id }}
+
+permissions:
+  contents: read
+
+jobs:
+  register:
+    name: Register oci_image artifact
+    runs-on: ubuntu-24.04
+    outputs:
+      artifact_id: ${{ steps.artifact.outputs.artifact_id }}
+      artifact_revision_id: ${{ steps.artifact.outputs.artifact_revision_id }}
+    steps:
+      - name: Register oci_image artifact
+        id: artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NULLPLATFORM_API_KEY: ${{ secrets.np_api_key }}
+          NP_ARTIFACT_NRN: ${{ inputs.nrn }}
+          ECR_REGISTRY: ${{ inputs.ecr_registry }}
+          IMAGE_NAME: ${{ inputs.image_name }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          DIGEST: ${{ inputs.image_digest }}
+          SOURCE_REF: ${{ inputs.source_ref }}
+          VERSION: ${{ inputs.version }}
+          CHANGELOG_TAG: ${{ inputs.changelog_release_tag }}
+          ANNOTATIONS: ${{ inputs.annotations }}
+          VISIBLE_TO: ${{ inputs.visible_to }}
+          NP_CLI_VERSION: ${{ inputs.np_cli_version }}
+          SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          set -o pipefail
+          # Registration is a declared choice: missing wiring is an error, not a
+          # silent skip (a typo'd secret name must not produce a green run).
+          if [ -z "$NULLPLATFORM_API_KEY" ]; then
+            echo "::error::artifact registration needs the np_api_key secret, and it is empty or not passed"
+            exit 1
+          fi
+          if [ -z "$NP_ARTIFACT_NRN" ]; then
+            echo "::error::artifact registration needs an owner nrn, and it is empty (check the repository/organization variable)"
+            exit 1
+          fi
+          curl -fsSL https://cli.nullplatform.com/install.sh | VERSION="$NP_CLI_VERSION" sh
+
+          # np artifact create expects host-only --registry; the repository is
+          # the registry path plus the image name.
+          REG_HOST="${ECR_REGISTRY%%/*}"
+          REG_PATH="${ECR_REGISTRY#*/}"
+          if [ "$REG_PATH" = "$ECR_REGISTRY" ]; then
+            REPOSITORY="$IMAGE_NAME"
+          else
+            REPOSITORY="$REG_PATH/$IMAGE_NAME"
+          fi
+
+          # Annotations are last-write-wins full replacement on the revision, so
+          # every run sends the complete set.
+          EXTRA_ARGS=(--annotation "org.opencontainers.image.source=$SOURCE_URL")
+          if [ -n "$VERSION" ]; then
+            EXTRA_ARGS+=(--annotation "org.opencontainers.image.version=$VERSION")
+          fi
+          while IFS= read -r LINE; do
+            LINE="$(printf '%s' "$LINE" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
+            [ -z "$LINE" ] && continue
+            case "$LINE" in
+              ?*=*) EXTRA_ARGS+=(--annotation "$LINE") ;;
+              *) echo "::error::annotation '$LINE' is not key=value"; exit 1 ;;
+            esac
+          done <<< "$ANNOTATIONS"
+
+          # The release notes become the curated changelog. The body is truncated
+          # at its first '## Artifact' section so a backfill re-run never feeds
+          # release-publish-oci's own appended metadata back in.
+          if [ -n "$CHANGELOG_TAG" ]; then
+            RELEASE_BODY=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$CHANGELOG_TAG" --jq '.body // ""' 2>/dev/null || true)
+            printf '%s' "$RELEASE_BODY" | sed '/^## Artifact/,$d' > changelog.md
+            if grep -q '[^[:space:]]' changelog.md; then
+              EXTRA_ARGS+=(--changelog-file changelog.md)
+            fi
+          fi
+          # Record the commit the image was built from (for release backfills
+          # the tag's commit, not the triggering sha).
+          if [ -n "$SOURCE_REF" ]; then
+            SOURCE_COMMIT=$(gh api "repos/$GITHUB_REPOSITORY/commits/$SOURCE_REF" --jq '.sha' 2>/dev/null || true)
+            if [ -n "$SOURCE_COMMIT" ]; then
+              EXTRA_ARGS+=(--annotation "org.opencontainers.image.revision=$SOURCE_COMMIT")
+            fi
+          fi
+          # read -a, not an unquoted expansion: organization=* must not glob.
+          IFS=', ' read -r -a SELECTORS <<< "$VISIBLE_TO"
+          for SELECTOR in "${SELECTORS[@]}"; do
+            if [ -n "$SELECTOR" ]; then EXTRA_ARGS+=(--visible-to "$SELECTOR"); fi
+          done
+
+          # stdout only into the capture: stderr stays on the run log, so CLI
+          # warnings can never corrupt the JSON parse.
+          OUTPUT=$(np artifact create \
+            --nrn "$NP_ARTIFACT_NRN" \
+            --type oci_image \
+            --registry "$REG_HOST" \
+            --repository "$REPOSITORY" \
+            --digest "$DIGEST" \
+            --tag "$IMAGE_TAG" \
+            "${EXTRA_ARGS[@]}" \
+            --format json) || {
+            # np prints its error as JSON on stdout; without this the failing
+            # step shows only "exit code 1" and the cause is lost.
+            echo "::error::np artifact create failed"
+            echo "$OUTPUT"
+            exit 1
+          }
+          echo "$OUTPUT"
+          ARTIFACT_ID=$(echo "$OUTPUT" | jq -r '.id // .resource_id // empty' || true)
+          REVISION_ID=$(echo "$OUTPUT" | jq -r '.resource_revision_id // empty' || true)
+          if [ -z "$ARTIFACT_ID" ]; then
+            # Created (the command succeeded) but the id was not in the output:
+            # keep the run green and say so, never claim "not registered".
+            echo "::warning::artifact created but no id found in CLI output"
+            ARTIFACT_ID="registered (id unavailable)"
+          fi
+          echo "artifact_id=$ARTIFACT_ID" >> "$GITHUB_OUTPUT"
+          echo "artifact_revision_id=$REVISION_ID" >> "$GITHUB_OUTPUT"
