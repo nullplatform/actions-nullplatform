@@ -43,7 +43,7 @@ name: release-publish-oci
 #     id-token: write
 #   jobs:
 #     release:
-#       uses: nullplatform/actions-nullplatform/.github/workflows/release-publish-oci.yml@main
+#       uses: nullplatform/actions-nullplatform/.github/workflows/release-publish-oci.yml@v1
 #       with:
 #         image_name: scopes/lambda
 #         existing_tag: ${{ inputs.existing_tag || '' }}
