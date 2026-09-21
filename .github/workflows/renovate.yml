@@ -52,7 +52,7 @@ jobs:
   renovate:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # Without the App there is nothing to authenticate as. Fail loudly rather
       # than run Renovate with a token that cannot write anywhere.
