@@ -49,7 +49,8 @@ env:
   RENOVATE_DRY_RUN: ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) && 'full' || '' }}
   # Machine-readable record of every repository and upgrade the run considered; the last step renders it.
   RENOVATE_REPORT_TYPE: file
-  RENOVATE_REPORT_PATH: renovate-report.json
+  # /tmp is the volume the action shares with the runner, and the only path the container can write.
+  RENOVATE_REPORT_PATH: /tmp/renovate-report.json
 
 jobs:
   renovate:
@@ -92,13 +93,13 @@ jobs:
         if: always()
         run: |
           set -euo pipefail
-          if [ ! -f renovate-report.json ]; then
+          if [ ! -f "${RENOVATE_REPORT_PATH}" ]; then
             echo "Renovate produced no report." | tee -a "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           mode=$([ -n "${RENOVATE_DRY_RUN}" ] && echo "would open" || echo "opened")
           rows=$(jq -r '.repositories // {} | to_entries[] as $r | ($r.value.branches // [])[] as $b | ($b.upgrades // [])[]
-            | "| \($r.key | sub("^[^/]+/";"")) | \($b.branchName // "-") | \(.depName // .packageName // "-") | \(.currentValue // .currentVersion // "-") | \(.newValue // .newVersion // "-") | \(.updateType // "-") |"' renovate-report.json)
+            | "| \($r.key | sub("^[^/]+/";"")) | \($b.branchName // "-") | \(.depName // .packageName // "-") | \(.currentValue // .currentVersion // "-") | \(.newValue // .newVersion // "-") | \(.updateType // "-") |"' "${RENOVATE_REPORT_PATH}")
           {
             echo "## Renovate: what this run ${mode}"
             echo
