@@ -1,9 +1,9 @@
 name: code-review-command
 
-# On-demand review tiers, asked for in a PR comment: `@claude <question>` and
-# `@claude deep`.
+# On-demand review tiers, asked for in a PR comment: `@claude <question>`,
+# `@claude deep` and `@claude fix`.
 #
-# Callers get ONE call for both tiers. This workflow decides which command was
+# Callers get ONE call for all three. This workflow decides which command was
 # asked for, who is allowed to ask, and which PR it applies to — that is all
 # mechanism, so it lives here rather than being repeated as an `if:` per job per
 # repo. Today each repo carries nine near-identical condition blocks; this is the
@@ -12,9 +12,12 @@ name: code-review-command
 # What stays with the caller: the prompt files, since what a good answer looks
 # like is the repo's own business.
 #
-# `@claude fix` is deliberately NOT here. It needs `contents: write`, it pushes a
-# branch and opens a PR, and it runs package managers over PR-head code — a
-# different risk conversation that deserves its own review.
+# `fix` is the one tier that WRITES. It needs `contents: write`, it pushes a
+# branch and opens a PR, and a caller may ask it to install dependencies first —
+# which executes package scripts from the PR under review. It therefore refuses a
+# PR from a fork by default (`allow_fork_fix`), because "a member asks the fixer
+# to tidy an outside contributor's PR" is both a normal thing to want and exactly
+# the case where fork code would run against a write-scoped token.
 
 on:
   workflow_call:
@@ -25,6 +28,10 @@ on:
         type: string
       deep_prompt_file:
         description: 'Path in the CALLING repo to the prompt for a deep review.'
+        required: true
+        type: string
+      fix_prompt_file:
+        description: 'Path in the CALLING repo to the prompt for generating a fix.'
         required: true
         type: string
       allowed_associations:
@@ -70,6 +77,42 @@ on:
         required: false
         type: string
         default: 'Bash(gh pr diff:*),Bash(gh pr view:*),Read,Glob,Grep,Write'
+      fix_model:
+        required: false
+        type: string
+        default: 'opus'
+      fix_max_turns:
+        required: false
+        type: number
+        default: 25
+      fix_max_budget_usd:
+        required: false
+        type: string
+        default: '5.00'
+      fix_allowed_tools:
+        description: |
+          Tools the fixer may use. This is the only tier granted write tools, and the
+          only one that may run git. Add package-manager tools here if the repo needs
+          `fix_install_command`.
+        required: false
+        type: string
+        default: 'Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr create:*),Bash(git:*),Write,Edit,Read,Glob,Grep'
+      fix_install_command:
+        description: |
+          Optional command run before the fixer starts, for repos where edits are
+          meaningless without dependencies. Leave EMPTY unless needed: it executes
+          package scripts from the PR under review.
+        required: false
+        type: string
+        default: ''
+      allow_fork_fix:
+        description: |
+          Permit `@claude fix` on a PR whose head is in another repository. Off by
+          default — a fix run checks out PR-head code with a write-scoped token, so a
+          fork would be running untrusted code against this repo's credentials.
+        required: false
+        type: boolean
+        default: false
       node_version_file:
         required: false
         type: string
@@ -85,17 +128,19 @@ on:
         required: true
     outputs:
       command:
-        description: 'qa | deep | (empty when the comment asked for nothing, or the commenter may not ask).'
+        description: 'qa | deep | fix | (empty when the comment asked for nothing, or the commenter may not ask).'
         value: ${{ jobs.detect.outputs.command }}
 
 jobs:
   detect:
     name: Read the request
     runs-on: ubuntu-24.04
-    permissions: {}
+    permissions:
+      pull-requests: read # to ask whether the head is a fork, which gates `fix`
     outputs:
       command: ${{ steps.parse.outputs.command }}
       pr_number: ${{ steps.parse.outputs.pr_number }}
+      is_fork: ${{ steps.fork.outputs.is_fork }}
     steps:
       - name: Work out what was asked, and by whom
         id: parse
@@ -167,13 +212,11 @@ jobs:
               exit 0 ;;
           esac
 
-          # `deep` first: "@claude deep" also contains "@claude".
+          # The qualified commands first: "@claude deep" also contains "@claude".
           if printf '%s' "$body" | grep -qiE '(^|[[:space:]])@claude[[:space:]]+deep([[:space:]]|$)'; then
             command=deep
           elif printf '%s' "$body" | grep -qiE '(^|[[:space:]])@claude[[:space:]]+fix([[:space:]]|$)'; then
-            # Handled by the caller's own job, not here.
-            echo "'@claude fix' is not served by this workflow — ignoring."
-            exit 0
+            command=fix
           elif printf '%s' "$body" | grep -qiE '(^|[[:space:]])@claude([[:space:]]|$)'; then
             command=qa
           else
@@ -184,6 +227,22 @@ jobs:
           # The exit trap writes both; this just settles the values.
           pr_number="$number"
           echo "Request: ${command} on PR #${pr_number}."
+
+      - name: Is the head a fork?
+        id: fork
+        # Only `fix` cares, but answering here keeps the tier jobs free of queries.
+        # `isCrossRepository` is GitHub's own answer, not a guess from the payload —
+        # an `issue_comment` payload carries no head-repo information at all.
+        if: steps.parse.outputs.command == 'fix'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.parse.outputs.pr_number }}
+        run: |
+          set -euo pipefail
+          is_fork=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json isCrossRepository --jq '.isCrossRepository')
+          echo "is_fork=${is_fork}" >>"$GITHUB_OUTPUT"
+          echo "PR #${PR_NUMBER} head is a fork: ${is_fork}"
 
   qa:
     name: Answer the question
@@ -407,3 +466,130 @@ jobs:
             "${SHA:0:7}" "$REPO" "$PR_NUMBER" "$SHA" "$(date -u '+%Y-%m-%d %H:%M UTC')" \
             >>"${RUNNER_TEMP}/deep.md"
           gh api "repos/${REPO}/issues/comments/${COMMENT_ID}" -X PATCH -F body=@"${RUNNER_TEMP}/deep.md"
+
+  # `fix` is split in two so the fork guard is ONE job-level condition rather than
+  # the same expression repeated on every step.
+  fix-declined:
+    name: Decline a fix on a fork
+    needs: detect
+    if: needs.detect.outputs.command == 'fix' && needs.detect.outputs.is_fork == 'true' && !inputs.allow_fork_fix
+    runs-on: ubuntu-24.04
+    permissions:
+      pull-requests: write
+      issues: write
+    steps:
+      - name: Say why it will not run
+        # Posted, not silent: someone asked, and the reason is actionable.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ needs.detect.outputs.pr_number }}
+        run: |
+          # The markdown below holds backticks, which shellcheck reads as a command
+          # substitution that will not expand. It is literal text.
+          # shellcheck disable=SC2016
+          {
+            echo '<!-- claude-fix -->'
+            echo
+            echo '**`@claude fix` does not run on a pull request from a fork.**'
+            echo
+            echo "A fix run checks out the pull request's own code with permission to write"
+            echo 'to this repository, so on a fork that would execute untrusted code against'
+            echo 'our credentials. Apply the change by hand, or re-open the work from a branch'
+            echo 'in this repository.'
+          } >"${RUNNER_TEMP}/declined.md"
+          gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file "${RUNNER_TEMP}/declined.md"
+          echo "::notice::Declined: the head is in another repository and allow_fork_fix is false."
+
+  fix:
+    name: Generate a fix
+    needs: detect
+    if: needs.detect.outputs.command == 'fix' && (needs.detect.outputs.is_fork != 'true' || inputs.allow_fork_fix)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      # The only tier with write access: it pushes a branch and opens a PR.
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
+    steps:
+      - name: Checkout the PR head
+        uses: actions/checkout@v7
+        with:
+          # The number was validated as digits in `detect`.
+          ref: refs/pull/${{ needs.detect.outputs.pr_number }}/head
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        if: inputs.fix_install_command != ''
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: ${{ inputs.node_version_file }}
+
+      - name: Install dependencies
+        # Opt-in, and the reason it is opt-in: this executes package scripts from
+        # the pull request under review.
+        if: inputs.fix_install_command != ''
+        env:
+          INSTALL_COMMAND: ${{ inputs.fix_install_command }}
+        run: |
+          echo "Running the caller's install command before the fixer starts."
+          # The value comes from the caller's own workflow file, so it is as trusted
+          # as the workflow itself — never from an event payload.
+          eval "$INSTALL_COMMAND"
+
+      - name: Record start time
+        id: timer
+        run: echo "start=$(date +%s)" >>"$GITHUB_OUTPUT"
+
+      - name: Generate the fix
+        id: fix
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.claude_code_oauth_token }}
+          show_full_output: true
+          additional_permissions: |
+            actions: read
+          claude_args: |
+            --model ${{ inputs.fix_model }} --max-turns ${{ inputs.fix_max_turns }} --max-budget-usd ${{ inputs.fix_max_budget_usd }} --allowedTools "${{ inputs.fix_allowed_tools }}"
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR_NUMBER: ${{ needs.detect.outputs.pr_number }}
+            FIX_BRANCH: claude/fix-${{ needs.detect.outputs.pr_number }}
+
+            Read ${{ inputs.fix_prompt_file }} and follow it exactly.
+            The triggering comment may carry instructions after "@claude fix"; prefer
+            those over anything you would otherwise have chosen to change.
+
+            These hold whatever the prompt file says:
+            - Only touch files already in this pull request's diff.
+            - Commit on FIX_BRANCH, and open a pull request against the branch under
+              review — never against the default branch.
+            - Never merge anything. A human approves the fix.
+            - Comment on PR_NUMBER with a link to the fix, starting the body with the
+              marker <!-- claude-fix -->.
+
+      - name: Stamp the fix comment with how it ran
+        continue-on-error: true
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ needs.detect.outputs.pr_number }}
+          MODEL: ${{ inputs.fix_model }}
+          BUDGET: ${{ inputs.fix_max_budget_usd }}
+          START: ${{ steps.timer.outputs.start }}
+        run: |
+          DURATION=$(( $(date +%s) - START ))
+          BUDGET_LABEL="\$${BUDGET}"
+          COMMENT_ID=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments?per_page=100" \
+            --jq '[.[] | select(.user.login == "github-actions[bot]") | select(.body | contains("<!-- claude-fix -->"))] | last | .id')
+          [ -n "$COMMENT_ID" ] && [ "$COMMENT_ID" != "null" ] || exit 0
+          gh api "repos/${REPO}/issues/comments/${COMMENT_ID}" --jq '.body' \
+            | awk '/^<sub>⏱️/{exit} {print}' >"${RUNNER_TEMP}/fix.md"
+          printf '\n---\n<sub>⏱️ %dm %ds · %s · budget-cap: %s</sub>\n' \
+            "$(( DURATION / 60 ))" "$(( DURATION % 60 ))" "$MODEL" "$BUDGET_LABEL" \
+            >>"${RUNNER_TEMP}/fix.md"
+          gh api "repos/${REPO}/issues/comments/${COMMENT_ID}" -X PATCH -F body=@"${RUNNER_TEMP}/fix.md"
