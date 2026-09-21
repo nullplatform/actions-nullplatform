@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.6.0](https://github.com/nullplatform/actions-nullplatform/compare/v1.5.0...v1.6.0) (2026-09-21)
+
+
+### Features
+
+* **pr-checks-node-pnpm:** opt-in changed-since, shard and lint inputs ([52d68b6](https://github.com/nullplatform/actions-nullplatform/commit/52d68b64ed37a4d5c36c5c33d423775b011f9783))
+* publish test images from branches with publish-test-image-oci ([da34862](https://github.com/nullplatform/actions-nullplatform/commit/da34862aef7b79bcaf0d308daf3ed5e9706a262b))
+* **publish-test-image-oci:** register test builds on the release artifact ([c4e03b1](https://github.com/nullplatform/actions-nullplatform/commit/c4e03b1c19147e39acaad6c21b962507686e0014))
+* **publish-test-image-oci:** register test builds on the release artifact ([cc7c2dd](https://github.com/nullplatform/actions-nullplatform/commit/cc7c2dde811ccdb6a4baa4de782b47bc15839b2a))
+
+
+### Bug Fixes
+
+* **ci:** mint both App tokens with client-id ([7987a0c](https://github.com/nullplatform/actions-nullplatform/commit/7987a0c465849439684d40ef0f5afe4a18444e41))
+* **ci:** mint the App token with client-id, app-id is deprecated ([09c8a0f](https://github.com/nullplatform/actions-nullplatform/commit/09c8a0f2091585643b4efa02d521454486195d6c))
+* **ci:** mint the App tokens with client-id instead of the deprecated app-id ([6970511](https://github.com/nullplatform/actions-nullplatform/commit/6970511fb221422f42fb27b9fa6391e82a72c6e4))
+* **ci:** the guard checks the private key, not the app id ([0a3d28d](https://github.com/nullplatform/actions-nullplatform/commit/0a3d28da7ead216a068085f6057a1bc022cd5a84))
+
 ## [1.5.0](https://github.com/nullplatform/actions-nullplatform/compare/v1.4.0...v1.5.0) (2026-09-18)
 
 
