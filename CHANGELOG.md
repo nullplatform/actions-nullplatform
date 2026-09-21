@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.6.1](https://github.com/nullplatform/actions-nullplatform/compare/v1.6.0...v1.6.1) (2026-09-21)
+
+
+### Bug Fixes
+
+* **ci:** call the tofu workflows through the path form ([3ff11c0](https://github.com/nullplatform/actions-nullplatform/commit/3ff11c018f69ae1c23895aa342c88114eedc3d4c))
+* **ci:** internal references resolved to main and leaked the caller's pin ([e0eb7b6](https://github.com/nullplatform/actions-nullplatform/commit/e0eb7b6cde8615c07da5f7b3840486f1f05919f2))
+* **ci:** keep the shared CI standard from drifting ([8c7af5c](https://github.com/nullplatform/actions-nullplatform/commit/8c7af5c523ff0c43b7f01edb54192d6137c7573b))
+* **ci:** pin run-first to the major tag so a pinned caller does not run main ([0954d9b](https://github.com/nullplatform/actions-nullplatform/commit/0954d9b3a0a6e08fc9d2a3ba987d033459b51715))
+* **ci:** pin run-first to the major tag so a pinned caller does not run main ([63c5be4](https://github.com/nullplatform/actions-nullplatform/commit/63c5be4533872c6445781c76fb7b1dce72559797))
+* **deps:** bump the github-actions group across 1 directory with 4 updates ([30770e7](https://github.com/nullplatform/actions-nullplatform/commit/30770e7128c596f42358e1133d48cd14abc9a9b6))
+* **release:** don't leak gh api error bodies into release/artifact data ([2f48440](https://github.com/nullplatform/actions-nullplatform/commit/2f48440845448aa2bbecfd2675c7e484dabfeb43))
+* **release:** don't leak gh api error bodies into release/artifact data ([62bb3d0](https://github.com/nullplatform/actions-nullplatform/commit/62bb3d086c05c73beccf2f087bd3661a4a1221a9))
+
 ## [1.6.0](https://github.com/nullplatform/actions-nullplatform/compare/v1.5.0...v1.6.0) (2026-09-21)
 
 
