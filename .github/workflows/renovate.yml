@@ -47,6 +47,9 @@ env:
   # first dry-run was silently a real run because DRY_RUN never got in. Renovate
   # reads RENOVATE_DRY_RUN natively: "full" = log everything, change nothing.
   RENOVATE_DRY_RUN: ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) && 'full' || '' }}
+  # Machine-readable record of every repository and upgrade the run considered; the last step renders it.
+  RENOVATE_REPORT_TYPE: file
+  RENOVATE_REPORT_PATH: renovate-report.json
 
 jobs:
   renovate:
@@ -84,3 +87,26 @@ jobs:
         env:
           LOG_LEVEL: ${{ inputs.log_level || 'info' }}
           RENOVATE_DRY_RUN: ${{ env.RENOVATE_DRY_RUN }}
+
+      - name: What this run would change
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ ! -f renovate-report.json ]; then
+            echo "Renovate produced no report." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          mode=$([ -n "${RENOVATE_DRY_RUN}" ] && echo "would open" || echo "opened")
+          rows=$(jq -r '.repositories // {} | to_entries[] as $r | ($r.value.branches // [])[] as $b | ($b.upgrades // [])[]
+            | "| \($r.key | sub("^[^/]+/";"")) | \($b.branchName // "-") | \(.depName // .packageName // "-") | \(.currentValue // .currentVersion // "-") | \(.newValue // .newVersion // "-") | \(.updateType // "-") |"' renovate-report.json)
+          {
+            echo "## Renovate: what this run ${mode}"
+            echo
+            if [ -z "${rows}" ]; then
+              echo "Nothing to update."
+            else
+              echo "| repo | branch | dependency | from | to | type |"
+              echo "|---|---|---|---|---|---|"
+              echo "${rows}"
+            fi
+          } | tee -a "$GITHUB_STEP_SUMMARY"
