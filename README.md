@@ -455,6 +455,7 @@ The standard release pipeline for service repos that ship an OCI image. Chains r
 - `package_state_role_arn`: AWS IAM role ARN for the package stack's state bucket, for a role that does not follow the convention; it wins over the account
 - `package_state_bucket`: S3 bucket for the package stack states (required with `package_stack_dir`)
 - `package_state_region`: region of that bucket (required with `package_stack_dir`)
+- `app-id` / `app-private-key`: GitHub App that opens the release PR. Without them the PR is opened by `github-actions[bot]` and its checks are held for approval
 
 With `package_stack_dir`, a `publish-package` job runs after the artifact is registered: see [publish-package](#publish-package).
 
