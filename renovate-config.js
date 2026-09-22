@@ -139,5 +139,13 @@ module.exports = {
     // on the current findings; 1.37.0 clears them but is seven minors away.
     // Moving this decides which Kubernetes version we stop supporting.
     { matchDepNames: ['kubernetes/kubernetes'], allowedVersions: '<1.32' },
+
+    // The AMI's fluent-bit is not free to move: fluentbit_run.sh loads cloudwatch.so
+    // through -e, and that plugin is copied out of aws-for-fluent-bit:3.1.1, which ships
+    // fluent-bit 4.2.0. A 5.x binary refuses a 4.2 plugin and fluent-bit stops starting,
+    // which on a log agent means silence, not an error. The k8s-tools container loads no
+    // external plugin and is deliberately left out of this rule.
+    { matchRepositories: ['nullplatform/customers-aws-image'],
+      matchDepNames: ['fluent/fluent-bit'], allowedVersions: '<5' },
   ],
 };
