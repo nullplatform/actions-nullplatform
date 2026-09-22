@@ -20,7 +20,7 @@ permissions:
 
 env:
   # Only repos that publish an image. Org-wide, Dependabot alone has 150 open npm PRs in unrelated repos.
-  IMAGE_REPOS: '^(services-.*|scopes(-.*)?|scope-testing|plugin-base-worker|k8s-tools|customers-aws-image|cli|controlplane-agent|performance-prometheus|traffic-kong-gateway-base-image|actions-nullplatform)$'
+  IMAGE_REPOS: '^(services-.*|scopes(-.*)?|scope-testing|worker-bridge|k8s-tools|customers-aws-image|cli|controlplane-agent|performance-prometheus|traffic-kong-gateway-base-image|actions-nullplatform)$'
 
   # scopes-*/services-* repos exempt from the release-conformance check (dead since 2023).
   CONFORMANCE_IGNORE: '^(services-executor-base-image)$'
@@ -68,12 +68,12 @@ jobs:
           OWNER: ${{ github.repository_owner }}
         run: |
           set -euo pipefail
-          search() { gh search prs --owner "${OWNER}" --state open --author "$1" --limit 200 \
+          search() { gh search prs --owner "${OWNER}" --state open --author "$1" --limit 1000 \
                        --json number,title,url,repository,createdAt --jq '.[] | . + {bot: "'"$2"'"}'; }
           {
             search app/dependabot                 Dependabot
             search app/renovate-app-nullplatform  Renovate
-            search app/github-actions             release-please | jq -c 'select(.title | startswith("chore(main): release"))'
+            search app/github-actions             release-please | jq -c 'select(.title | test("^chore(\\(.+\\))?: release"))'
           } | jq -s --arg re "${IMAGE_REPOS}" 'map(select(.repository.name | test($re))) | sort_by(.repository.name, .createdAt)' > prs.json
           echo "count=$(jq length prs.json)" >> "$GITHUB_OUTPUT"
           jq -r '.[] | "  \(.repository.name)#\(.number) [\(.bot)] \(.title)"' prs.json
@@ -101,23 +101,34 @@ jobs:
           fi
           : > conformance.tsv
           while read -r repo; do
-            status=$(gh api -i "repos/${OWNER}/${repo}/contents/.github/workflows" 2>/dev/null | head -1 | awk '{print $2}' || true)
-            if [ "${status}" = "403" ]; then printf '%s\t%s\n' "${repo}" "workflows not readable by the App token" >> conformance.tsv; continue; fi
-            release=$(gh api "repos/${OWNER}/${repo}/contents/.github/workflows/release.yml" --jq .content 2>/dev/null | base64 -d 2>/dev/null || true)
-            caller=$(gh api "repos/${OWNER}/${repo}/contents/.github/workflows/auto-merge-release.yml" --jq .content 2>/dev/null | base64 -d 2>/dev/null || true)
+            # One listing does double duty: it proves the token can read the repo, and it is the
+            # file inventory. A failed call must not become a finding: a fabricated report is worse
+            # than none, so the repo is skipped with a warning.
+            listing=$(gh api "repos/${OWNER}/${repo}/contents/.github/workflows" 2>/dev/null || true)
+            if [ -z "${listing}" ]; then
+              echo "::warning::${repo}: .github/workflows not readable, skipped"
+              continue
+            fi
+            release=''; caller=''; stray=''
+            for f in $(printf '%s' "${listing}" | jq -r '.[] | select(.type == "file") | select(.name | test("\\.ya?ml$")) | .name'); do
+              body=$(gh api "repos/${OWNER}/${repo}/contents/.github/workflows/${f}" --jq .content 2>/dev/null | base64 -d 2>/dev/null || true)
+              if [ "${f}" = "release.yml" ]; then release="${body}"; fi
+              if [ "${f}" = "auto-merge-release.yml" ]; then caller="${body}"; fi
+              # `|| true` on both greps: "no match" is the normal case and would abort the step
+              # under `set -e -o pipefail`, which is exactly how this check shipped broken.
+              hits=$(printf '%s\n' "${body}" \
+                | { grep -oE 'actions-nullplatform/\.github/workflows/[A-Za-z0-9._-]+\.yml@[A-Za-z0-9._-]+' || true; } \
+                | { grep -vE '@v[0-9]+$' || true; } | sed -E "s#.*/#${f}: #" | tr '\n' ' ')
+              if [ -n "${hits}" ]; then stray="${stray}${hits} "; fi
+            done
             problems=()
             # Both reusables count: release-publish-oci.yml (current) and release.yml (earlier services).
             grep -qE 'actions-nullplatform/.github/workflows/release(-publish-oci)?\.yml' <<< "${release}" || problems+=("no standard release.yml")
             if [ -z "${caller}" ]; then problems+=("no auto-merge caller")
             elif ! grep -q 'workflow_run' <<< "${caller}"; then problems+=("caller still on pull_request"); fi
             if [ -s app_repos.txt ] && ! grep -qx "${repo}" app_repos.txt; then problems+=("release App not installed"); fi
-            # The whole family follows the shared workflows' major tag: @main takes every merge there
-            # unreviewed, and an exact version silently goes stale. Any major tag counts, so a repo
-            # part-way through a v1 to v2 migration is not reported as drift.
-            stray=$(printf '%s\n%s\n' "${release}" "${caller}" \
-              | grep -oE 'actions-nullplatform/\.github/workflows/[a-z-]+\.yml@[A-Za-z0-9._-]+' \
-              | grep -vE '@v[0-9]+$' | sed -E 's#.*/##' | sort -u | tr '\n' ' ')
-            [ -z "${stray}" ] || problems+=("not on a major tag: ${stray% }")
+            # Any major tag counts, so a repo part-way through a v1 to v2 migration is not drift.
+            if [ -n "${stray}" ]; then problems+=("not on a major tag: $(echo "${stray}" | tr -s ' ' | sed 's/ $//')"); fi
             [ "${#problems[@]}" -eq 0 ] || printf '%s\t%s\n' "${repo}" "$(IFS=,; echo "${problems[*]}")" >> conformance.tsv
           done < repos.txt
           jq -R -s 'split("\n") | map(select(length > 0) | split("\t") | {repo: .[0], problems: .[1]})' conformance.tsv > conformance.json

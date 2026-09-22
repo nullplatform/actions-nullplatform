@@ -103,6 +103,7 @@ module.exports = {
     arg('TOFU', 'opentofu/opentofu'),
     arg('HELM', 'helm/helm'),
     arg('KUBECTL', 'kubernetes/kubernetes'),
+    arg('FLUENT_BIT', 'fluent/fluent-bit'),
     {
       // A version written straight into the download URL, with no ARG. Five of
       // these exist today (performance-prometheus, traffic-kong-gateway-base-image)
@@ -138,5 +139,22 @@ module.exports = {
     // on the current findings; 1.37.0 clears them but is seven minors away.
     // Moving this decides which Kubernetes version we stop supporting.
     { matchDepNames: ['kubernetes/kubernetes'], allowedVersions: '<1.32' },
+
+    // The AMI's fluent-bit is not free to move: fluentbit_run.sh loads cloudwatch.so
+    // through -e, and that plugin is copied out of aws-for-fluent-bit:3.1.1, which ships
+    // fluent-bit 4.2.0. A 5.x binary refuses a 4.2 plugin and fluent-bit stops starting,
+    // which on a log agent means silence, not an error. The k8s-tools container loads no
+    // external plugin and is deliberately left out of this rule.
+    { matchRepositories: ['nullplatform/customers-aws-image'],
+      matchDepNames: ['fluent/fluent-bit'], allowedVersions: '<5' },
+
+    // The other half of that pair, and the reason it cannot be automated: the plugin image
+    // is versioned 3.x while the fluent-bit inside it is not. 3.1.1 carries 4.2.0; 3.4.17
+    // carries 5.0.9. Renovate reads that as a MINOR bump, so the no-majors rule above does
+    // not catch it, and the run would hand a 4.2 binary a 5.0 plugin -- fluent-bit then
+    // refuses to start, which on a log agent is silence rather than an error. This pin moves
+    // only together with binary_version, by hand, after checking the ABI they share.
+    { matchRepositories: ['nullplatform/customers-aws-image'],
+      matchDepNames: ['public.ecr.aws/aws-observability/aws-for-fluent-bit'], enabled: false },
   ],
 };

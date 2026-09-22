@@ -22,6 +22,10 @@ jobs:
             rules: {
               'type-enum': [2, 'always', ['feat', 'feature', 'fix', 'docs', 'style', 'refactor', 'perf', 'test', 'build', 'ci', 'chore', 'revert']],
               'subject-case': [2, 'never', ['sentence-case', 'start-case', 'pascal-case', 'upper-case']],
+            // Dependabot and Renovate paste release notes and URLs into the body; the 100-character
+            // limit from config-conventional rejects their commits and nobody writes those bodies.
+            'body-max-line-length': [0],
+            'footer-max-line-length': [0],
             },
           };
           EOF
