@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.6.3](https://github.com/nullplatform/actions-nullplatform/compare/v1.6.2...v1.6.3) (2026-09-22)
+
+
+### Bug Fixes
+
+* **ci:** the digest also lists bot PRs merged or closed since the last one ([febea4b](https://github.com/nullplatform/actions-nullplatform/commit/febea4b7617c9b238a9603f34ddf838abd00b744))
+* **ci:** the digest also lists bot PRs merged or closed since the last one ([5a74dd3](https://github.com/nullplatform/actions-nullplatform/commit/5a74dd3d341534b1c7b437f587525ed4964c1aca))
+
 ## [1.6.2](https://github.com/nullplatform/actions-nullplatform/compare/v1.6.1...v1.6.2) (2026-09-22)
 
 
