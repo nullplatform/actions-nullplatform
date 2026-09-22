@@ -3,7 +3,8 @@ name: bot-prs-digest
 # One Slack message per cycle, on the 3rd and 17th (base image rebuilt on the 1st/15th,
 # Renovate on the 2nd/16th), listing every bot PR still waiting for a merge across the org: Dependabot (base image FROM), Renovate (pinned binaries, Go,
 # npm, actions) and release-please release PRs. Nobody watches 40 repos; this is the
-# list the person who merges works from. Silent when there is nothing to merge.
+# list the person who merges works from, plus what merged or closed since the last digest.
+# Silent when there is nothing to report.
 
 on:
   schedule:
@@ -68,15 +69,25 @@ jobs:
           OWNER: ${{ github.repository_owner }}
         run: |
           set -euo pipefail
-          search() { gh search prs --owner "${OWNER}" --state open --author "$1" --limit 1000 \
-                       --json number,title,url,repository,createdAt --jq '.[] | . + {bot: "'"$2"'"}'; }
-          {
-            search app/dependabot                 Dependabot
-            search app/renovate-app-nullplatform  Renovate
-            search app/github-actions             release-please | jq -c 'select(.title | test("^chore(\\(.+\\))?: release"))'
-          } | jq -s --arg re "${IMAGE_REPOS}" 'map(select(.repository.name | test($re))) | sort_by(.repository.name, .createdAt)' > prs.json
-          echo "count=$(jq length prs.json)" >> "$GITHUB_OUTPUT"
+          search() { gh search prs --owner "${OWNER}" --author "$1" --limit 1000 "${@:3}" \
+                       --json number,title,url,repository,createdAt,state --jq '.[] | . + {bot: "'"$2"'"}'; }
+          bots() {
+            search app/dependabot                 Dependabot "$@"
+            search app/renovate-app-nullplatform  Renovate "$@"
+            search app/github-actions             release-please "$@" | jq -c 'select(.title | test("^chore(\\(.+\\))?: release"))'
+          }
+          only_images() { jq -s --arg re "${IMAGE_REPOS}" 'map(select(.repository.name | test($re))) | sort_by(.repository.name, .createdAt)'; }
+          bots --state open | only_images > prs.json
+          # Open-only misses PRs opened and closed between two digests, e.g. merged on Renovate's own day.
+          day=$(date -u +%-d)
+          if [ "${day}" -ge 17 ]; then since=$(date -u +%Y-%m-03)
+          elif [ "${day}" -ge 3 ]; then since=$(date -u -d "$(date -u +%Y-%m-01) -1 month" +%Y-%m-17)
+          else since=$(date -u -d "$(date -u +%Y-%m-01) -1 month" +%Y-%m-03); fi
+          bots --state closed --closed ">=${since}" | only_images | jq 'map(select(.bot != "release-please"))' > closed.json
+          { echo "count=$(jq length prs.json)"; echo "closed=$(jq length closed.json)"; echo "since=${since}"; } >> "$GITHUB_OUTPUT"
           jq -r '.[] | "  \(.repository.name)#\(.number) [\(.bot)] \(.title)"' prs.json
+          echo "closed since ${since}:"
+          jq -r '.[] | "  \(.repository.name)#\(.number) [\(.bot)] \(.state) \(.title)"' closed.json
 
       # Core's rule: every public scopes-*/services-* repo releases through release-publish-oci and merges
       # its release PR itself. A repo listed here needs the standard set, not a hand-merged release PR.
@@ -137,17 +148,18 @@ jobs:
           cat conformance.tsv
 
       - name: Post to Slack
-        if: steps.collect.outputs.count != '0' || steps.conformance.outputs.count != '0'
+        if: steps.collect.outputs.count != '0' || steps.collect.outputs.closed != '0' || steps.conformance.outputs.count != '0'
         env:
           WEBHOOK: ${{ secrets.SLACK_SECURITY_URL }}
           DRY_RUN: ${{ inputs.dry_run }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           TOTAL: ${{ steps.conformance.outputs.total }}
+          SINCE: ${{ steps.collect.outputs.since }}
         run: |
           set -euo pipefail
           # One section per repo (Slack caps a section at 3000 chars and a message at 50 blocks).
-          jq -n --arg run "$RUN_URL" --arg total "$TOTAL" --slurpfile prs prs.json --slurpfile conf conformance.json '
-            ($prs[0]) as $all | ($conf[0]) as $bad
+          jq -n --arg run "$RUN_URL" --arg total "$TOTAL" --arg since "$SINCE" --slurpfile prs prs.json --slurpfile closed closed.json --slurpfile conf conformance.json '
+            ($prs[0]) as $all | ($closed[0]) as $done | ($conf[0]) as $bad
             | ($all | group_by(.repository.name) | map({type:"section", text:{type:"mrkdwn", text:
                 ("*" + .[0].repository.name + "*\n" +
                  (map("• <" + .url + "|#" + (.number|tostring) + "> " + .bot + " · " + (.title|.[0:90])
@@ -159,12 +171,17 @@ jobs:
                 + (if ($groups|length) > 42 then [{type:"section", text:{type:"mrkdwn", text:("… and " + (($groups|length) - 42 | tostring) + " more repos")}}] else [] end)
                 + [{type:"context", elements:[{type:"mrkdwn", text:("Dependabot moves the base image, Renovate the pinned binaries/Go/npm, release-please cuts the release. Merge = publish. <" + $run + "|run>")}]}]
               else [] end) as $prblocks
+            | (if ($done|length) > 0 then
+                [{type:"section", text:{type:"mrkdwn", text:(("*Merged or closed since " + $since + ": " + ($done|length|tostring) + "*\n"
+                  + ($done | .[0:15] | map("• <" + .url + "|" + .repository.name + "#" + (.number|tostring) + "> " + .bot + " · " + .state + " · " + (.title|.[0:70])) | join("\n"))
+                  + (if ($done|length) > 15 then "\n… and " + (($done|length) - 15 | tostring) + " more" else "" end)) | .[0:2900])}}]
+              else [] end) as $doneblocks
             | (if ($bad|length) > 0 then
                 [{type:"header", text:{type:"plain_text", text:("Repos without the standard auto release: " + ($bad|length|tostring) + " of " + $total), emoji:true}},
                  {type:"section", text:{type:"mrkdwn", text:(($bad | map("• *" + .repo + "*: " + .problems) | join("\n")) | .[0:2900])}},
                  {type:"context", elements:[{type:"mrkdwn", text:"Core rule: every public scopes-*/services-* repo releases with release-publish-oci and merges its release PR from workflow_run. A repo needs the standard workflows and the release App installed; without the App the caller runs and cannot merge."}]}]
               else [] end) as $confblocks
-            | {blocks: ($prblocks + $confblocks)}' > slack.json
-          if [ "${DRY_RUN}" = "true" ]; then echo "DRY RUN - would post:"; jq -r '.blocks[] | .text.text // .elements[0].text' slack.json; exit 0; fi
+            | {blocks: ($prblocks + $doneblocks + $confblocks)}' > slack.json
+          if [ "${DRY_RUN:-}" = "true" ]; then echo "DRY RUN - would post:"; jq -r '.blocks[] | .text.text // .elements[0].text' slack.json; exit 0; fi
           # --fail-with-body: curl returns 0 even when Slack rejects the payload.
           curl -sS --fail-with-body -X POST -H 'Content-type: application/json' --data @slack.json "${WEBHOOK}"
