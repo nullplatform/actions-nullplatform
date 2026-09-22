@@ -147,5 +147,14 @@ module.exports = {
     // external plugin and is deliberately left out of this rule.
     { matchRepositories: ['nullplatform/customers-aws-image'],
       matchDepNames: ['fluent/fluent-bit'], allowedVersions: '<5' },
+
+    // The other half of that pair, and the reason it cannot be automated: the plugin image
+    // is versioned 3.x while the fluent-bit inside it is not. 3.1.1 carries 4.2.0; 3.4.17
+    // carries 5.0.9. Renovate reads that as a MINOR bump, so the no-majors rule above does
+    // not catch it, and the run would hand a 4.2 binary a 5.0 plugin -- fluent-bit then
+    // refuses to start, which on a log agent is silence rather than an error. This pin moves
+    // only together with binary_version, by hand, after checking the ABI they share.
+    { matchRepositories: ['nullplatform/customers-aws-image'],
+      matchDepNames: ['public.ecr.aws/aws-observability/aws-for-fluent-bit'], enabled: false },
   ],
 };
