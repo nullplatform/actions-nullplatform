@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.6.2](https://github.com/nullplatform/actions-nullplatform/compare/v1.6.1...v1.6.2) (2026-09-22)
+
+
+### Bug Fixes
+
+* **ci:** unblock bot commits, track the fluent-bit pin, and fix two blind spots in the digest ([e28db41](https://github.com/nullplatform/actions-nullplatform/commit/e28db41000224e0fcb04782d3368e3c795fc6c01))
+* **renovate:** keep the AMI's fluent-bit on the line its compiled plugin supports ([bd00112](https://github.com/nullplatform/actions-nullplatform/commit/bd001124fee15d00662b541640f039343edf40ac))
+* **renovate:** stop the cloudwatch plugin from moving without its binary ([a2e7f84](https://github.com/nullplatform/actions-nullplatform/commit/a2e7f8463b6fef8ec7c2f35d055bd18bad1b43d7))
+
 ## [1.6.1](https://github.com/nullplatform/actions-nullplatform/compare/v1.6.0...v1.6.1) (2026-09-21)
 
 
