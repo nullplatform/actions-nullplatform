@@ -1,14 +1,14 @@
 name: bot-prs-digest
 
-# One Slack message per cycle, on the 3rd and 17th (base image rebuilt on the 1st/15th,
-# Renovate on the 2nd/16th), listing every bot PR still waiting for a merge across the org: Dependabot (base image FROM), Renovate (pinned binaries, Go,
+# One Slack message per cycle, on the 2nd and 16th at 09:30 ART, 90 minutes after Renovate's run
+# (base image rebuilt on the 1st/15th), so the PRs it just opened are in it. Lists every bot PR still waiting for a merge across the org: Dependabot (base image FROM), Renovate (pinned binaries, Go,
 # npm, actions) and release-please release PRs. Nobody watches 40 repos; this is the
 # list the person who merges works from, plus what merged or closed since the last digest.
 # Silent when there is nothing to report.
 
 on:
   schedule:
-    - cron: '45 12 3,17 * *'
+    - cron: '30 12 2,16 * *'
   workflow_dispatch:
     inputs:
       dry_run:
@@ -80,9 +80,9 @@ jobs:
           bots --state open | only_images > prs.json
           # Open-only misses PRs opened and closed between two digests, e.g. merged on Renovate's own day.
           day=$(date -u +%-d)
-          if [ "${day}" -ge 17 ]; then since=$(date -u +%Y-%m-03)
-          elif [ "${day}" -ge 3 ]; then since=$(date -u -d "$(date -u +%Y-%m-01) -1 month" +%Y-%m-17)
-          else since=$(date -u -d "$(date -u +%Y-%m-01) -1 month" +%Y-%m-03); fi
+          if [ "${day}" -ge 16 ]; then since=$(date -u +%Y-%m-02)
+          elif [ "${day}" -ge 2 ]; then since=$(date -u -d "$(date -u +%Y-%m-01) -1 month" +%Y-%m-16)
+          else since=$(date -u -d "$(date -u +%Y-%m-01) -1 month" +%Y-%m-02); fi
           bots --state closed --closed ">=${since}" | only_images | jq 'map(select(.bot != "release-please"))' > closed.json
           { echo "count=$(jq length prs.json)"; echo "closed=$(jq length closed.json)"; echo "since=${since}"; } >> "$GITHUB_OUTPUT"
           jq -r '.[] | "  \(.repository.name)#\(.number) [\(.bot)] \(.title)"' prs.json
@@ -162,7 +162,7 @@ jobs:
             ($prs[0]) as $all | ($closed[0]) as $done | ($conf[0]) as $bad
             | ($all | group_by(.repository.name) | map({type:"section", text:{type:"mrkdwn", text:
                 ("*" + .[0].repository.name + "*\n" +
-                 (map("• <" + .url + "|#" + (.number|tostring) + "> " + .bot + " · " + (.title|.[0:90])
+                 (map("• " + (if (now - (.createdAt | fromdateiso8601)) < 86400 then "🆕 " else "" end) + "<" + .url + "|#" + (.number|tostring) + "> " + .bot + " · " + (.title|.[0:90])
                        + " · " + (((now - (.createdAt | fromdateiso8601)) / 86400 | floor | tostring) + "d"))
                   | join("\n")) | .[0:2900])}})) as $groups
             | (if ($all|length) > 0 then
