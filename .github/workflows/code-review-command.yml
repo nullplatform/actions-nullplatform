@@ -414,6 +414,11 @@ jobs:
           PR_NUMBER: ${{ needs.detect.outputs.pr_number }}
         run: bash .review-scripts/.github/scripts/review/ci-status.sh
 
+      - name: Clear any review body the checkout brought in
+        # Same as the auto tier: a non-empty body reads as "the model answered", so a
+        # body committed in the PR must never be what gets posted.
+        run: rm -rf -- "${GITHUB_WORKSPACE}/.claude-deep-review-body.md"
+
       - name: Run the deep review
         id: review
         # Same reasoning as the auto tier: a review that could not be produced is a
