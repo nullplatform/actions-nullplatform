@@ -326,6 +326,12 @@ jobs:
         env:
           PROMPT_FILE: ${{ inputs.qa_prompt_file }}
         run: |
+          # A plain repo path: `./x` matches nothing in a sparse checkout, `../x` escapes it.
+          case "$PROMPT_FILE" in
+            /* | ./* | *..*)
+              echo "::error::Give the prompt as a plain repo path (like .github/review/prompts/qa.md), not '${PROMPT_FILE}'."
+              exit 1 ;;
+          esac
           if [ ! -s ".review-prompts/${PROMPT_FILE}" ]; then
             echo "::error::${PROMPT_FILE} is not on the default branch; this tier only follows a prompt the PR cannot change."
             exit 1
@@ -419,6 +425,12 @@ jobs:
         env:
           PROMPT_FILE: ${{ inputs.deep_prompt_file }}
         run: |
+          # A plain repo path: `./x` matches nothing in a sparse checkout, `../x` escapes it.
+          case "$PROMPT_FILE" in
+            /* | ./* | *..*)
+              echo "::error::Give the prompt as a plain repo path (like .github/review/prompts/qa.md), not '${PROMPT_FILE}'."
+              exit 1 ;;
+          esac
           if [ ! -s ".review-prompts/${PROMPT_FILE}" ]; then
             echo "::error::${PROMPT_FILE} is not on the default branch; this tier only follows a prompt the PR cannot change."
             exit 1
@@ -695,6 +707,12 @@ jobs:
         env:
           PROMPT_FILE: ${{ inputs.fix_prompt_file }}
         run: |
+          # A plain repo path: `./x` matches nothing in a sparse checkout, `../x` escapes it.
+          case "$PROMPT_FILE" in
+            /* | ./* | *..*)
+              echo "::error::Give the prompt as a plain repo path (like .github/review/prompts/qa.md), not '${PROMPT_FILE}'."
+              exit 1 ;;
+          esac
           if [ ! -s ".review-prompts/${PROMPT_FILE}" ]; then
             echo "::error::${PROMPT_FILE} is not on the default branch; this tier only follows a prompt the PR cannot change."
             exit 1
