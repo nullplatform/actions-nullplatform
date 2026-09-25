@@ -1,0 +1,355 @@
+name: code-review
+
+# Automated PR review, tier 1: one advisory pass with Claude.
+#
+# This workflow owns the MECHANISM only — running the action, working out whether
+# the model actually answered, and keeping exactly one review comment on the PR.
+# It deliberately knows nothing about any caller's vocabulary: the caller decides
+# what is risky, builds its own context, and points at its own prompt. Adding a
+# repo must never mean editing this file.
+
+on:
+  workflow_call:
+    inputs:
+      prompt_file:
+        description: 'Path in the CALLING repo to the prompt the reviewer must follow (e.g. .github/review/prompts/auto-review.md).'
+        required: true
+        type: string
+      prompt_context:
+        description: |
+          Context prepended to the prompt, as KEY: value lines. The caller builds this
+          from its own classification, so the vocabulary is the caller's: an app may
+          send AREAS/DOCS/RISK, a library monorepo CHANGED_PACKAGES/RISK. Values here
+          are authoritative for the run.
+        required: true
+        type: string
+      model:
+        description: 'Model for the review pass.'
+        required: false
+        type: string
+        default: 'sonnet'
+      max_turns:
+        description: 'Turn budget. Exhausting it may still leave a partial review, which is posted.'
+        required: false
+        type: number
+        default: 25
+      max_budget_usd:
+        description: 'Spend cap for one run, in USD.'
+        required: false
+        type: string
+        default: '1.00'
+      allowed_tools:
+        description: |
+          Tools the reviewer may use. Reads inside the workspace need no rule. The one
+          write allowed is the review body: a bare `Write` (or `Read`) approves EVERY
+          path, including the shared scripts the later steps run with the job token.
+          `Edit(...)` rules govern the Write tool; a leading `/` anchors at the workspace.
+        required: false
+        type: string
+        default: 'Bash(gh pr diff:*),Bash(gh pr view:*),Edit(/.claude-review-body.md)'
+      allowed_bots:
+        description: |
+          Comma-separated bot actors whose pushes still get a review. Without this the
+          action refuses a bot-authored `synchronize` ("non-human actor") and writes
+          nothing. Name the bots rather than using `*`, so dependabot stays excluded.
+        required: false
+        type: string
+        default: ''
+      comment_marker:
+        description: 'HTML marker identifying this workflow''s review comment, so it is edited in place rather than duplicated.'
+        required: false
+        type: string
+        default: '<!-- claude-auto-review -->'
+      timeout_minutes:
+        description: 'Hard cap on the review job.'
+        required: false
+        type: number
+        default: 12
+      node_version_file:
+        description: 'File naming the Node version, used by the CI-status summary.'
+        required: false
+        type: string
+        default: '.node-version'
+      scripts_ref:
+        description: |
+          Override the ref the shared scripts are taken from. Leave empty: by default
+          they come from the same ref this workflow was pinned to, so a caller pinned
+          to a tag can never run drifting scripts.
+        required: false
+        type: string
+        default: ''
+    secrets:
+      claude_code_oauth_token:
+        description: 'OAuth token for claude-code-action.'
+        required: true
+    outputs:
+      status:
+        description: 'ok | unavailable | skipped | missing — see scripts/review/review-outcome.sh.'
+        value: ${{ jobs.review.outputs.status }}
+      escalate:
+        description: 'true when the review body asked to escalate. The caller decides what that means.'
+        value: ${{ jobs.review.outputs.escalate }}
+
+jobs:
+  review:
+    name: Auto Review
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+    # One review per PR at a time: a newer push cancels the run in flight, so an
+    # older run can never finish last and overwrite the review of a newer commit.
+    # A caller must not put this same group on its calling job — the two would
+    # wait on each other.
+    concurrency:
+      group: code-review-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    permissions:
+      contents: read
+      checks: write # the outcome is published as its own check run
+      pull-requests: write
+      actions: read
+    outputs:
+      status: ${{ steps.outcome.outputs.status }}
+      escalate: ${{ steps.escalate.outputs.escalate }}
+    steps:
+      - name: Checkout the repository under review
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Resolve the ref to take shared scripts from
+        id: scripts
+        # A caller pinning this workflow to a tag expects the scripts pinned too.
+        # `job.workflow_sha` is the commit this reusable workflow itself was loaded
+        # from, so the scripts match it exactly — even if the tag moves mid-run.
+        env:
+          WORKFLOW_SHA: ${{ job.workflow_sha }}
+          OVERRIDE: ${{ inputs.scripts_ref }}
+        run: |
+          ref="${OVERRIDE:-$WORKFLOW_SHA}"
+          # An empty ref would check out the default branch, silently undoing the pin.
+          if [ -z "$ref" ]; then
+            echo "::error::Could not tell which commit this workflow runs from (job.workflow_sha is empty); refusing to take the shared scripts from the default branch."
+            exit 1
+          fi
+          echo "ref=$ref" >>"$GITHUB_OUTPUT"
+
+      - name: Checkout shared review scripts
+        uses: actions/checkout@v7
+        with:
+          repository: nullplatform/actions-nullplatform
+          ref: ${{ steps.scripts.outputs.ref }}
+          path: .review-scripts
+          sparse-checkout: |
+            .github/scripts/review
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: ${{ inputs.node_version_file }}
+
+      - name: Record start time
+        id: timer
+        run: echo "start=$(date +%s)" >>"$GITHUB_OUTPUT"
+
+      - name: Summarize CI status
+        id: ci
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: bash .review-scripts/.github/scripts/review/ci-status.sh
+
+      - name: Clear any review body the checkout brought in
+        # The outcome step reads a non-empty body as "the model answered", so this
+        # run must be its only writer. A body committed in the PR (or on the default
+        # branch) would otherwise be posted — and could request an escalation —
+        # whenever the model is rate-limited or crashes.
+        run: rm -rf -- "${GITHUB_WORKSPACE}/.claude-review-body.md"
+
+      - name: Run the review
+        id: review
+        # Advisory: a review that could not be produced is a missing review, not a
+        # broken PR. The steps below decide what actually happened, so this must not
+        # red-X the check on its own.
+        continue-on-error: true
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.claude_code_oauth_token }}
+          # The job's own token, not a Claude App one: this pass only reads, and the
+          # workflow does the posting. The App token defaults to `contents: write`,
+          # and the OIDC exchange that mints it can skip a run silently.
+          github_token: ${{ github.token }}
+          allowed_bots: ${{ inputs.allowed_bots }}
+          show_full_output: true
+          claude_args: |
+            --model ${{ inputs.model }} --max-turns ${{ inputs.max_turns }} --max-budget-usd ${{ inputs.max_budget_usd }} --allowedTools "${{ inputs.allowed_tools }}"
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR_NUMBER: ${{ github.event.pull_request.number }}
+            CI_STATUS: ${{ steps.ci.outputs.summary }}
+            REVIEW_BODY_FILE: ${{ github.workspace }}/.claude-review-body.md
+            ${{ inputs.prompt_context }}
+
+            Read ${{ inputs.prompt_file }} and follow it exactly.
+            The context values above are authoritative.
+
+      - name: Classify the outcome
+        id: outcome
+        if: always()
+        # Via env, not inline `${{ }}`: the action reports a path it chose, and an
+        # inline expansion would be re-parsed by the shell before bash saw it.
+        env:
+          EXECUTION_FILE: ${{ steps.review.outputs.execution_file }}
+          BODY_FILE: ${{ github.workspace }}/.claude-review-body.md
+          REVIEW_OUTCOME: ${{ steps.review.outcome }}
+        run: |
+          bash .review-scripts/.github/scripts/review/review-outcome.sh \
+            "$EXECUTION_FILE" "$BODY_FILE" "$REVIEW_OUTCOME"
+
+      - name: Post or update the review comment
+        id: post
+        if: always() && steps.outcome.outputs.status == 'ok'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          MARKER: ${{ inputs.comment_marker }}
+          BODY_FILE: ${{ github.workspace }}/.claude-review-body.md
+        run: |
+          bash .review-scripts/.github/scripts/review/upsert-comment.sh "$MARKER" "$BODY_FILE"
+
+      - name: Clear a stale "did not run" note
+        # The review exists now, so an earlier run's note no longer holds.
+        if: always() && steps.post.outcome == 'success'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          bash .review-scripts/.github/scripts/review/delete-comments.sh '<!-- claude-review-unavailable -->'
+
+      - name: Say so when the review could not run
+        # A spend or rate limit is not a defect in this PR. Its own marker, so a real
+        # review from an earlier run is left intact.
+        if: always() && steps.outcome.outputs.status == 'unavailable'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REASON: ${{ steps.outcome.outputs.reason }}
+        run: |
+          {
+            echo '<!-- claude-review-unavailable -->'
+            echo
+            echo "**The automated review did not run.** $REASON"
+            echo
+            echo "Nothing is wrong with this PR. Once the limit resets, re-run the PR's most recent run of this check."
+          } >"${RUNNER_TEMP}/review-unavailable.md"
+          bash .review-scripts/.github/scripts/review/upsert-comment.sh \
+            '<!-- claude-review-unavailable -->' "${RUNNER_TEMP}/review-unavailable.md"
+
+      - name: Fail when the review is missing for no known reason
+        if: always() && steps.outcome.outputs.status == 'missing'
+        # `reason` can carry the API's own error wording, so it is untrusted text.
+        # Through env, never inline — inline it would be spliced into this script.
+        env:
+          REASON: ${{ steps.outcome.outputs.reason }}
+        run: |
+          echo "::error::${REASON}"
+          exit 1
+
+      - name: Publish the outcome as a check
+        # A job cannot report `neutral`, so publish a companion check that can.
+        # Best-effort: never red-X a job over its own status report. Not for a
+        # review that never ran: the job's own failure or cancellation says it.
+        if: always() && steps.outcome.outputs.status != '' && steps.outcome.outputs.status != 'not_run'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STATUS: ${{ steps.outcome.outputs.status }}
+          REASON: ${{ steps.outcome.outputs.reason }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          case "$STATUS" in
+            ok)          conclusion=success; title="Review posted" ;;
+            unavailable) conclusion=neutral; title="Review did not run" ;;
+            skipped)     conclusion=neutral; title="Review skipped itself" ;;
+            *)           conclusion=failure; title="Review failed" ;;
+          esac
+          gh api "repos/${{ github.repository }}/check-runs" \
+            -f name='Auto Review outcome' \
+            -f head_sha="$HEAD_SHA" \
+            -f status=completed \
+            -f conclusion="$conclusion" \
+            -f 'output[title]'="$title" \
+            -f 'output[summary]'="$REASON" >/dev/null
+
+      - name: Notify the author
+        # Best-effort: the review comment is the deliverable — a failed ping must not
+        # red-X a job whose review posted fine.
+        continue-on-error: true
+        if: always() && steps.post.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          MARKER: ${{ inputs.comment_marker }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          bash .review-scripts/.github/scripts/review/notify-author.sh \
+            '<!-- claude-review-ping -->' "$MARKER" 'automated review'
+
+      - name: Detect an escalation request
+        id: escalate
+        # Reported as an output; what escalation MEANS is the caller's decision.
+        # Only a body this run wrote (`ok`) can ask for it.
+        if: always()
+        env:
+          STATUS: ${{ steps.outcome.outputs.status }}
+          BODY_FILE: ${{ github.workspace }}/.claude-review-body.md
+        run: |
+          if [ "$STATUS" = ok ] && grep -q '<!-- escalate-deep' "$BODY_FILE"; then
+            echo 'escalate=true' >>"$GITHUB_OUTPUT"
+          else
+            echo 'escalate=false' >>"$GITHUB_OUTPUT"
+          fi
+
+      - name: Stamp the review with how it ran
+        # Only after a successful post: on a bare always() this would re-stamp a stale
+        # comment with a new SHA whenever the post was skipped or failed. Best-effort,
+        # like the ping: a failed footer must not red-X a review that posted fine.
+        if: always() && steps.post.outcome == 'success'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          MARKER: ${{ inputs.comment_marker }}
+          MODEL: ${{ inputs.model }}
+          BUDGET: ${{ inputs.max_budget_usd }}
+          START: ${{ steps.timer.outputs.start }}
+          # The commit this run reviewed, not the PR's current head: the footer says
+          # what was reviewed, and the head may have moved on while this ran.
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          DURATION=$(( $(date +%s) - START ))
+          # Assembled here rather than written as `$%s` in the format string, which
+          # would be a literal `$` inside single quotes (shellcheck SC2016).
+          BUDGET_LABEL="\$${BUDGET}"
+          COMMENT_ID=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments?per_page=100" \
+            --jq "[.[] | select(.user.login == \"github-actions[bot]\") | select(.body | contains(\"${MARKER}\"))] | last | .id")
+          if [ -n "$COMMENT_ID" ] && [ "$COMMENT_ID" != "null" ]; then
+            # Drop any previous footer, so a re-run replaces it rather than stacking.
+            gh api "repos/${REPO}/issues/comments/${COMMENT_ID}" --jq '.body' \
+              | awk '/^<sub>⏱️/{exit} {print}' >"${RUNNER_TEMP}/body.md"
+            # The format string holds markdown backticks, which shellcheck reads as a
+            # command substitution that will not expand. It is literal text.
+            # shellcheck disable=SC2016
+            printf '\n---\n<sub>⏱️ %dm %ds · %s · budget-cap: %s · reviewed [`%s`](https://github.com/%s/pull/%s/commits/%s) · %s</sub>\n' \
+              "$(( DURATION / 60 ))" "$(( DURATION % 60 ))" "$MODEL" "$BUDGET_LABEL" \
+              "${SHA:0:7}" "$REPO" "$PR_NUMBER" "$SHA" "$(date -u '+%Y-%m-%d %H:%M UTC')" \
+              >>"${RUNNER_TEMP}/body.md"
+            gh api "repos/${REPO}/issues/comments/${COMMENT_ID}" -X PATCH -F body=@"${RUNNER_TEMP}/body.md"
+          fi
