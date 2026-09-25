@@ -9,6 +9,8 @@
 #
 # Usage: notify-author.sh '<!-- ping-marker -->' '<!-- review-marker -->' 'auto-review'
 # Env:   REPO (owner/name), PR_NUMBER, GH_TOKEN
+#        HEAD_SHA (optional) — the commit that was reviewed, so the ping names the
+#        same one as the review's footer; defaults to the PR's current head.
 set -euo pipefail
 
 # shellcheck source=.github/scripts/review/lib.sh
@@ -30,7 +32,7 @@ fi
 info=$(gh_retry gh pr view "$PR_NUMBER" --repo "$REPO" --json author,headRefOid)
 author=$(printf '%s' "$info" | jq -r '.author.login')
 is_bot=$(printf '%s' "$info" | jq -r '.author.is_bot')
-sha=$(printf '%s' "$info" | jq -r '.headRefOid')
+sha="${HEAD_SHA:-$(printf '%s' "$info" | jq -r '.headRefOid')}"
 
 # Mentioning a bot author (e.g. dependabot[bot]) would not notify a human.
 if [ "$is_bot" = "true" ]; then

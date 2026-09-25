@@ -285,6 +285,7 @@ jobs:
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           MARKER: ${{ inputs.comment_marker }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           bash .review-scripts/.github/scripts/review/notify-author.sh \
             '<!-- claude-review-ping -->' "$MARKER" 'automated review'
@@ -306,8 +307,10 @@ jobs:
 
       - name: Stamp the review with how it ran
         # Only after a successful post: on a bare always() this would re-stamp a stale
-        # comment with a new SHA whenever the post was skipped or failed.
+        # comment with a new SHA whenever the post was skipped or failed. Best-effort,
+        # like the ping: a failed footer must not red-X a review that posted fine.
         if: always() && steps.post.outcome == 'success'
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
