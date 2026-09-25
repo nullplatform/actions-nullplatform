@@ -251,6 +251,11 @@ jobs:
     if: needs.detect.outputs.command == 'qa'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    # One run per tier per PR, queued rather than cancelled: each was asked for.
+    # It lives here, not with the caller, because one calling job serves all tiers.
+    concurrency:
+      group: code-review-qa-${{ needs.detect.outputs.pr_number }}
+      cancel-in-progress: false
     permissions:
       contents: read
       pull-requests: write
@@ -344,6 +349,9 @@ jobs:
     if: needs.detect.outputs.command == 'deep'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    concurrency:
+      group: code-review-deep-${{ needs.detect.outputs.pr_number }}
+      cancel-in-progress: false
     permissions:
       contents: read
       checks: write
@@ -562,6 +570,10 @@ jobs:
     if: needs.detect.outputs.command == 'fix' && (needs.detect.outputs.is_fork != 'true' || inputs.allow_fork_fix)
     runs-on: ubuntu-24.04
     timeout-minutes: 25
+    # Above all here: two runs at once would race on the same claude/fix-N branch.
+    concurrency:
+      group: code-review-fix-${{ needs.detect.outputs.pr_number }}
+      cancel-in-progress: false
     permissions:
       # The only tier with write access: it pushes a branch and opens a PR.
       contents: write
