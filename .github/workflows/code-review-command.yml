@@ -1,0 +1,841 @@
+name: code-review-command
+
+# On-demand review tiers, asked for in a PR comment: `@claude <question>`,
+# `@claude deep` and `@claude fix`.
+#
+# Callers get ONE call for all three. This workflow decides which command was
+# asked for, who is allowed to ask, and which PR it applies to — that is all
+# mechanism, so it lives here rather than being repeated as an `if:` per job per
+# repo. Today each repo carries nine near-identical condition blocks; this is the
+# one place they collapse into.
+#
+# What stays with the caller: the prompt files, since what a good answer looks
+# like is the repo's own business. They are read from the caller's default
+# branch, never from the PR under review — the model is told to follow them.
+# What a prompt then points the model at (AGENTS.md, a nested CLAUDE.md) is read
+# from the PR head: a PR can steer the guidance its own review reads, which only
+# matters for PRs from people who cannot push — forks, off in every caller today.
+#
+# `fix` is the one tier that WRITES. It needs `contents: write`, it pushes a
+# branch and opens a PR, and a caller may ask it to install dependencies first —
+# which executes package scripts from the PR under review. It therefore refuses a
+# PR from a fork by default (`allow_fork_fix`), because "a member asks the fixer
+# to tidy an outside contributor's PR" is both a normal thing to want and exactly
+# the case where fork code would run against a write-scoped token.
+
+on:
+  workflow_call:
+    inputs:
+      qa_prompt_file:
+        description: 'Path in the CALLING repo to the prompt for answering a question. Read from the default branch.'
+        required: true
+        type: string
+      deep_prompt_file:
+        description: 'Path in the CALLING repo to the prompt for a deep review. Read from the default branch.'
+        required: true
+        type: string
+      fix_prompt_file:
+        description: 'Path in the CALLING repo to the prompt for generating a fix. Read from the default branch.'
+        required: true
+        type: string
+      allowed_associations:
+        description: |
+          Comma-separated author_association values permitted to spend the budget.
+          Anyone else is ignored. Note GitHub reports NONE / FIRST_TIME_CONTRIBUTOR /
+          CONTRIBUTOR for people outside the repo, so the default keeps drive-by
+          commenters from starting a paid run.
+        required: false
+        type: string
+        default: 'OWNER,MEMBER,COLLABORATOR'
+      ignored_commands:
+        description: |
+          Comma-separated `@claude <word>` commands another workflow of the caller's
+          handles (e.g. `verify`). Such a comment is left to it instead of also being
+          answered as a question. Plain words only.
+        required: false
+        type: string
+        default: ''
+      qa_model:
+        required: false
+        type: string
+        default: 'sonnet'
+      qa_max_turns:
+        required: false
+        type: number
+        default: 10
+      qa_max_budget_usd:
+        required: false
+        type: string
+        default: '2.00'
+      qa_allowed_tools:
+        description: |
+          The Q&A tier writes its answer and this workflow posts it — never
+          `gh pr comment`, whose `--body-file` would post any file the model can read.
+          Reads inside the workspace need no rule; the one write allowed is the answer.
+        required: false
+        type: string
+        default: 'Bash(gh pr diff:*),Bash(gh pr view:*),Edit(/.claude-qa-answer.md)'
+      deep_model:
+        required: false
+        type: string
+        default: 'opus'
+      deep_max_turns:
+        required: false
+        type: number
+        default: 30
+      deep_max_budget_usd:
+        required: false
+        type: string
+        default: '5.00'
+      deep_allowed_tools:
+        description: |
+          The deep tier writes its body and this workflow posts it. Reads inside the
+          workspace need no rule; the one write allowed is the body — a bare `Write`
+          (or `Read`) approves EVERY path, including the shared scripts later steps run.
+        required: false
+        type: string
+        default: 'Bash(gh pr diff:*),Bash(gh pr view:*),Edit(/.claude-deep-review-body.md)'
+      fix_model:
+        required: false
+        type: string
+        default: 'opus'
+      fix_max_turns:
+        required: false
+        type: number
+        default: 25
+      fix_max_budget_usd:
+        required: false
+        type: string
+        default: '5.00'
+      fix_allowed_tools:
+        description: |
+          Tools the fixer may use. This is the only tier granted write tools, and the
+          only one that may run git. Add package-manager tools here if the repo needs
+          `fix_install_command`.
+        required: false
+        type: string
+        default: 'Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr create:*),Bash(git:*),Write,Edit,Read,Glob,Grep'
+      fix_install_command:
+        description: |
+          Optional command run before the fixer starts, for repos where edits are
+          meaningless without dependencies. It sets up its own package manager — the
+          runner ships npm and yarn, not pnpm (e.g. `corepack enable && pnpm install
+          --frozen-lockfile`) — and gets `GITHUB_TOKEN` for a private registry such as
+          GitHub Packages. Leave EMPTY unless needed: it executes package scripts from
+          the PR under review.
+        required: false
+        type: string
+        default: ''
+      allow_fork_fix:
+        description: |
+          Permit `@claude fix` on a PR whose head is in another repository. Off by
+          default — a fix run checks out PR-head code with a write-scoped token, so a
+          fork would be running untrusted code against this repo's credentials.
+        required: false
+        type: boolean
+        default: false
+      node_version_file:
+        required: false
+        type: string
+        default: '.node-version'
+      scripts_ref:
+        description: 'Override the ref shared scripts come from. Leave empty to match the ref the caller pinned.'
+        required: false
+        type: string
+        default: ''
+    secrets:
+      claude_code_oauth_token:
+        description: 'OAuth token for claude-code-action.'
+        required: true
+    outputs:
+      command:
+        description: 'qa | deep | fix | (empty when the comment asked for nothing, or the commenter may not ask).'
+        value: ${{ jobs.detect.outputs.command }}
+
+jobs:
+  detect:
+    name: Read the request
+    runs-on: ubuntu-24.04
+    permissions:
+      pull-requests: read # to ask whether the head is a fork, which gates `fix`
+    outputs:
+      command: ${{ steps.parse.outputs.command }}
+      pr_number: ${{ steps.parse.outputs.pr_number }}
+      is_fork: ${{ steps.fork.outputs.is_fork }}
+    steps:
+      - name: Work out what was asked, and by whom
+        id: parse
+        # Every value here is attacker-controlled: a comment body is whatever
+        # someone typed. It reaches the shell only through env, is never echoed
+        # back, and only a fixed token ever leaves this step.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          REVIEW_BODY: ${{ github.event.review.body }}
+          COMMENT_ASSOC: ${{ github.event.comment.author_association }}
+          REVIEW_ASSOC: ${{ github.event.review.author_association }}
+          COMMENT_USER_TYPE: ${{ github.event.comment.user.type }}
+          REVIEW_USER_TYPE: ${{ github.event.review.user.type }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_IS_PR: ${{ github.event.issue.pull_request.url }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          ALLOWED: ${{ inputs.allowed_associations }}
+          IGNORED: ${{ inputs.ignored_commands }}
+        run: |
+          set -euo pipefail
+
+          # One writer, via the exit trap: every path below leaves through it, so
+          # "ignore this comment" is simply the default empty command rather than a
+          # second write that happens to land last.
+          command=""
+          pr_number=""
+          emit() {
+            {
+              echo "command=${command}"
+              echo "pr_number=${pr_number}"
+            } >>"$GITHUB_OUTPUT"
+          }
+          trap emit EXIT
+
+          case "$EVENT_NAME" in
+            issue_comment)
+              # `issue_comment` fires for issues too; only PRs carry this url.
+              [ -n "$ISSUE_IS_PR" ] || { echo "Not a pull request — ignoring."; exit 0; }
+              body="$COMMENT_BODY"; assoc="$COMMENT_ASSOC"
+              user_type="$COMMENT_USER_TYPE"; number="$ISSUE_NUMBER"; new=created ;;
+            pull_request_review_comment)
+              body="$COMMENT_BODY"; assoc="$COMMENT_ASSOC"
+              user_type="$COMMENT_USER_TYPE"; number="$PR_NUMBER"; new=created ;;
+            pull_request_review)
+              body="$REVIEW_BODY"; assoc="$REVIEW_ASSOC"
+              user_type="$REVIEW_USER_TYPE"; number="$PR_NUMBER"; new=submitted ;;
+            *)
+              echo "::error::code-review-command was called on '$EVENT_NAME'. Call it on issue_comment, pull_request_review_comment or pull_request_review."
+              exit 1 ;;
+          esac
+
+          # Only a new request. An edit, a deletion or a dismissal carries the same
+          # body again — and deleting a `@claude fix` comment must not start a fix.
+          if [ "$EVENT_ACTION" != "$new" ]; then
+            echo "This ${EVENT_NAME} event is '${EVENT_ACTION}', not '${new}' — ignoring."
+            exit 0
+          fi
+
+          # A bot repeating the trigger text must not start a run.
+          if [ "$user_type" = "Bot" ]; then
+            echo "Comment is from a bot — ignoring."
+            exit 0
+          fi
+
+          # The PR number goes into a git ref later, so it must be digits only.
+          case "$number" in
+            ''|*[!0-9]*) echo "::error::Could not read a numeric PR number."; exit 1 ;;
+          esac
+
+          # Spaces dropped, so 'OWNER, MEMBER' does not silently shut MEMBER out.
+          case ",${ALLOWED// /}," in
+            *",${assoc},"*) ;;
+            *)
+              # Silent by design, matching how this behaves in the repos today.
+              # Saying "you may not do that" would need an ungated job to say it.
+              echo "author_association '${assoc}' may not request a review — ignoring."
+              exit 0 ;;
+          esac
+
+          # The qualified commands first: "@claude deep" also contains "@claude".
+          # Here-strings, not `printf | grep -q`: grep exits on the first match, and
+          # under pipefail the writer's SIGPIPE on a long comment reads as no match.
+          if grep -qiE '(^|[[:space:]])@claude[[:space:]]+deep([[:space:]]|$)' <<<"$body"; then
+            command=deep
+          elif grep -qiE '(^|[[:space:]])@claude[[:space:]]+fix([[:space:]]|$)' <<<"$body"; then
+            command=fix
+          elif grep -qiE '(^|[[:space:]])@claude([[:space:]]|$)' <<<"$body"; then
+            # Unless it is a command another workflow answers (e.g. `@claude verify`):
+            # that one is theirs, not a question for this one.
+            IFS=',' read -r -a ignored <<<"${IGNORED// /}"
+            for word in ${ignored[@]+"${ignored[@]}"}; do
+              case "$word" in
+                '') continue ;;
+                *[!a-zA-Z0-9_-]*) echo "::error::ignored_commands takes plain words; got '${word}'."; exit 1 ;;
+              esac
+              if grep -qiE "(^|[[:space:]])@claude[[:space:]]+${word}([[:space:]]|\$)" <<<"$body"; then
+                echo "@claude ${word} is handled by another workflow — ignoring."
+                exit 0
+              fi
+            done
+            command=qa
+          else
+            echo "No @claude request in this comment."
+            exit 0
+          fi
+
+          # The exit trap writes both; this just settles the values.
+          pr_number="$number"
+          echo "Request: ${command} on PR #${pr_number}."
+
+      - name: Is the head a fork?
+        id: fork
+        # Only `fix` cares, but answering here keeps the tier jobs free of queries.
+        # `isCrossRepository` is GitHub's own answer, not a guess from the payload —
+        # an `issue_comment` payload carries no head-repo information at all.
+        if: steps.parse.outputs.command == 'fix'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.parse.outputs.pr_number }}
+        run: |
+          set -euo pipefail
+          is_fork=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json isCrossRepository --jq '.isCrossRepository')
+          echo "is_fork=${is_fork}" >>"$GITHUB_OUTPUT"
+          echo "PR #${PR_NUMBER} head is a fork: ${is_fork}"
+
+  qa:
+    name: Answer the question
+    needs: detect
+    if: needs.detect.outputs.command == 'qa'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # One run per tier per PR, never cancelled mid-run: each was asked for. GitHub
+    # keeps one PENDING run per group, so a third request while one runs replaces
+    # the waiting second. It lives here, not with the caller, because one calling
+    # job serves all tiers.
+    concurrency:
+      group: code-review-qa-${{ needs.detect.outputs.pr_number }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      actions: read
+    steps:
+      - name: Checkout the PR head
+        uses: actions/checkout@v7
+        with:
+          # The question is about the proposed code, so Read/Grep must see it —
+          # the default checkout would give the base branch instead. The number
+          # was validated as digits in `detect`.
+          ref: refs/pull/${{ needs.detect.outputs.pr_number }}/head
+          fetch-depth: 0
+
+      - name: Checkout the prompt from the default branch
+        # The PR head is its author's to change — on a fork, anyone's — while this
+        # run holds secrets and write scopes. The action restores only the CLI's own
+        # startup files (.claude/, CLAUDE.md, …) from the base, so the prompt the
+        # model is told to follow comes from a ref the PR cannot touch.
+        # After the PR checkout, which would otherwise clean this directory away.
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: .review-prompts
+          persist-credentials: false
+          sparse-checkout: ${{ inputs.qa_prompt_file }}
+          sparse-checkout-cone-mode: false
+
+      - name: Hand the model its prompt and the request
+        env:
+          PROMPT_FILE: ${{ inputs.qa_prompt_file }}
+          # The triggering comment, as data. The model cannot otherwise see an inline
+          # review comment, and a queued run would answer whichever `@claude` is newest.
+          REQUEST_BODY: ${{ github.event.comment.body || github.event.review.body }}
+          REQUEST_URL: ${{ github.event.comment.html_url || github.event.review.html_url }}
+          REQUEST_PATH: ${{ github.event.comment.path }}
+          REQUEST_LINE: ${{ github.event.comment.line || github.event.comment.original_line }}
+        run: |
+          # A plain repo path: `./x` matches nothing in a sparse checkout, `../x` escapes it.
+          case "$PROMPT_FILE" in
+            /* | ./* | *..*)
+              echo "::error::Give the prompt as a plain repo path (like .github/review/prompts/qa.md), not '${PROMPT_FILE}'."
+              exit 1 ;;
+          esac
+          if [ ! -s ".review-prompts/${PROMPT_FILE}" ]; then
+            echo "::error::${PROMPT_FILE} is not on the default branch; this tier only follows a prompt the PR cannot change."
+            exit 1
+          fi
+          {
+            echo "From: ${REQUEST_URL}"
+            [ -z "$REQUEST_PATH" ] || echo "On: ${REQUEST_PATH}:${REQUEST_LINE}"
+            echo
+            printf '%s\n' "$REQUEST_BODY"
+          } >.review-prompts/request.md
+
+      - name: Clear any answer the checkout brought in
+        # Only this run may write it — the post below trusts whatever is there.
+        run: rm -rf -- "${GITHUB_WORKSPACE}/.claude-qa-answer.md"
+
+      - name: Record start time
+        id: timer
+        run: echo "start=$(date +%s)" >>"$GITHUB_OUTPUT"
+
+      - name: Answer
+        id: answer
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.claude_code_oauth_token }}
+          # The model only reads and writes its answer; the workflow posts it. So the
+          # job's own token, not a Claude App one, which defaults to `contents: write`.
+          github_token: ${{ github.token }}
+          show_full_output: true
+          claude_args: |
+            --model ${{ inputs.qa_model }} --max-turns ${{ inputs.qa_max_turns }} --max-budget-usd ${{ inputs.qa_max_budget_usd }} --allowedTools "${{ inputs.qa_allowed_tools }}"
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR_NUMBER: ${{ needs.detect.outputs.pr_number }}
+            ANSWER_FILE: ${{ github.workspace }}/.claude-qa-answer.md
+
+            Read .review-prompts/${{ inputs.qa_prompt_file }} and follow it exactly.
+            The triggering comment is in .review-prompts/request.md: its link, its file
+            and line when it is an inline comment, then its text. Answer the question it
+            asks after "@claude" — not any other @claude comment on the PR.
+            Write your answer, as markdown, to ANSWER_FILE. This workflow posts it; do
+            not post it yourself.
+
+      - name: Post the answer
+        # The model never holds a posting tool: `gh pr comment --body-file` takes a
+        # path, so it could post any file the model can read. This step posts, as
+        # github-actions[bot], with the footer already on — nothing to look up later.
+        if: always() && (steps.answer.outcome == 'success' || steps.answer.outcome == 'failure')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ needs.detect.outputs.pr_number }}
+          ANSWER_FILE: ${{ github.workspace }}/.claude-qa-answer.md
+          REQUEST_URL: ${{ github.event.comment.html_url || github.event.review.html_url }}
+          MODEL: ${{ inputs.qa_model }}
+          BUDGET: ${{ inputs.qa_max_budget_usd }}
+          START: ${{ steps.timer.outputs.start }}
+        run: |
+          if [ ! -s "$ANSWER_FILE" ]; then
+            echo "::error::The model wrote no answer."
+            exit 1
+          fi
+          DURATION=$(( $(date +%s) - START ))
+          BUDGET_LABEL="\$${BUDGET}"
+          {
+            echo '<!-- claude-qa -->'
+            echo "<sub>In reply to [this comment](${REQUEST_URL})</sub>"
+            echo
+            cat "$ANSWER_FILE"
+            printf '\n---\n<sub>⏱️ %dm %ds · %s · budget-cap: %s</sub>\n' \
+              "$(( DURATION / 60 ))" "$(( DURATION % 60 ))" "$MODEL" "$BUDGET_LABEL"
+          } >"${RUNNER_TEMP}/qa.md"
+          gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" -F body=@"${RUNNER_TEMP}/qa.md" >/dev/null
+
+  deep:
+    name: Deep Review
+    needs: detect
+    if: needs.detect.outputs.command == 'deep'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    concurrency:
+      group: code-review-deep-${{ needs.detect.outputs.pr_number }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      actions: read
+    steps:
+      - name: Checkout the PR head
+        id: pr # its `commit` output is the commit this review reads
+        uses: actions/checkout@v7
+        with:
+          ref: refs/pull/${{ needs.detect.outputs.pr_number }}/head
+          fetch-depth: 0
+
+      - name: Checkout the prompt from the default branch
+        # Same reasoning as the qa tier: never a prompt the PR can rewrite.
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: .review-prompts
+          persist-credentials: false
+          sparse-checkout: ${{ inputs.deep_prompt_file }}
+          sparse-checkout-cone-mode: false
+
+      - name: Hand the model its prompt and the request
+        env:
+          PROMPT_FILE: ${{ inputs.deep_prompt_file }}
+          # Same as the qa tier: the triggering comment, as data.
+          REQUEST_BODY: ${{ github.event.comment.body || github.event.review.body }}
+          REQUEST_URL: ${{ github.event.comment.html_url || github.event.review.html_url }}
+          REQUEST_PATH: ${{ github.event.comment.path }}
+          REQUEST_LINE: ${{ github.event.comment.line || github.event.comment.original_line }}
+        run: |
+          # A plain repo path: `./x` matches nothing in a sparse checkout, `../x` escapes it.
+          case "$PROMPT_FILE" in
+            /* | ./* | *..*)
+              echo "::error::Give the prompt as a plain repo path (like .github/review/prompts/qa.md), not '${PROMPT_FILE}'."
+              exit 1 ;;
+          esac
+          if [ ! -s ".review-prompts/${PROMPT_FILE}" ]; then
+            echo "::error::${PROMPT_FILE} is not on the default branch; this tier only follows a prompt the PR cannot change."
+            exit 1
+          fi
+          {
+            echo "From: ${REQUEST_URL}"
+            [ -z "$REQUEST_PATH" ] || echo "On: ${REQUEST_PATH}:${REQUEST_LINE}"
+            echo
+            printf '%s\n' "$REQUEST_BODY"
+          } >.review-prompts/request.md
+
+      - name: Resolve the ref to take shared scripts from
+        id: scripts
+        # Same as the auto tier: the commit this workflow was loaded from.
+        env:
+          WORKFLOW_SHA: ${{ job.workflow_sha }}
+          OVERRIDE: ${{ inputs.scripts_ref }}
+        run: |
+          ref="${OVERRIDE:-$WORKFLOW_SHA}"
+          # An empty ref would check out the default branch, silently undoing the pin.
+          if [ -z "$ref" ]; then
+            echo "::error::Could not tell which commit this workflow runs from (job.workflow_sha is empty); refusing to take the shared scripts from the default branch."
+            exit 1
+          fi
+          echo "ref=$ref" >>"$GITHUB_OUTPUT"
+
+      - name: Checkout shared review scripts
+        uses: actions/checkout@v7
+        with:
+          repository: nullplatform/actions-nullplatform
+          ref: ${{ steps.scripts.outputs.ref }}
+          path: .review-scripts
+          sparse-checkout: |
+            .github/scripts/review
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: ${{ inputs.node_version_file }}
+
+      - name: Record start time
+        id: timer
+        run: echo "start=$(date +%s)" >>"$GITHUB_OUTPUT"
+
+      - name: Summarize CI status
+        id: ci
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ needs.detect.outputs.pr_number }}
+        run: bash .review-scripts/.github/scripts/review/ci-status.sh
+
+      - name: Clear any review body the checkout brought in
+        # Same as the auto tier: a non-empty body reads as "the model answered", so a
+        # body committed in the PR must never be what gets posted.
+        run: rm -rf -- "${GITHUB_WORKSPACE}/.claude-deep-review-body.md"
+
+      - name: Run the deep review
+        id: review
+        # Same reasoning as the auto tier: a review that could not be produced is a
+        # missing review, not a broken PR. The outcome steps below decide.
+        continue-on-error: true
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.claude_code_oauth_token }}
+          # Same as the auto tier: the model only reads and the workflow posts, so the
+          # job's own token — not a Claude App one, which defaults to `contents: write`.
+          github_token: ${{ github.token }}
+          show_full_output: true
+          claude_args: |
+            --model ${{ inputs.deep_model }} --max-turns ${{ inputs.deep_max_turns }} --max-budget-usd ${{ inputs.deep_max_budget_usd }} --allowedTools "${{ inputs.deep_allowed_tools }}"
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR_NUMBER: ${{ needs.detect.outputs.pr_number }}
+            CI_STATUS: ${{ steps.ci.outputs.summary }}
+            TRIGGER: on request (@claude deep)
+            REVIEW_BODY_FILE: ${{ github.workspace }}/.claude-deep-review-body.md
+
+            Read .review-prompts/${{ inputs.deep_prompt_file }} and follow it exactly.
+            The triggering comment is in .review-prompts/request.md; it may carry
+            instructions after "@claude deep".
+
+      - name: Classify the outcome
+        id: outcome
+        if: always()
+        env:
+          EXECUTION_FILE: ${{ steps.review.outputs.execution_file }}
+          BODY_FILE: ${{ github.workspace }}/.claude-deep-review-body.md
+          REVIEW_OUTCOME: ${{ steps.review.outcome }}
+        run: |
+          bash .review-scripts/.github/scripts/review/review-outcome.sh \
+            "$EXECUTION_FILE" "$BODY_FILE" "$REVIEW_OUTCOME"
+
+      - name: Post or update the deep review
+        id: post
+        if: always() && steps.outcome.outputs.status == 'ok'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ needs.detect.outputs.pr_number }}
+          BODY_FILE: ${{ github.workspace }}/.claude-deep-review-body.md
+        run: |
+          bash .review-scripts/.github/scripts/review/upsert-comment.sh \
+            '<!-- claude-deep-review -->' "$BODY_FILE"
+
+      - name: Clear a stale "did not run" note
+        # The review exists now, so an earlier request's note no longer holds.
+        if: always() && steps.post.outcome == 'success'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ needs.detect.outputs.pr_number }}
+        run: |
+          bash .review-scripts/.github/scripts/review/delete-comments.sh '<!-- claude-deep-review-unavailable -->'
+
+      - name: Notify the author
+        # A repeat request edits the review in place, and an edit notifies no one.
+        if: always() && steps.post.outcome == 'success'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ needs.detect.outputs.pr_number }}
+          HEAD_SHA: ${{ steps.pr.outputs.commit }}
+        run: |
+          bash .review-scripts/.github/scripts/review/notify-author.sh \
+            '<!-- claude-deep-review-ping -->' '<!-- claude-deep-review -->' 'deep review'
+
+      - name: Say so when the review could not run
+        # Someone ASKED for this one, so silence would read as the request being lost.
+        # Its own marker — the auto tier's note is a different run's news — and posted
+        # fresh each time, since an edited comment notifies no one.
+        if: always() && steps.outcome.outputs.status == 'unavailable'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ needs.detect.outputs.pr_number }}
+          REASON: ${{ steps.outcome.outputs.reason }}
+        run: |
+          {
+            echo '<!-- claude-deep-review-unavailable -->'
+            echo
+            echo "**The deep review you asked for did not run.** $REASON"
+            echo
+            echo 'Nothing is wrong with this PR. Ask again once the limit resets.'
+          } >"${RUNNER_TEMP}/unavailable.md"
+          bash .review-scripts/.github/scripts/review/delete-comments.sh '<!-- claude-deep-review-unavailable -->'
+          gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" -F body=@"${RUNNER_TEMP}/unavailable.md" >/dev/null
+
+      - name: Fail when the review is missing for no known reason
+        if: always() && steps.outcome.outputs.status == 'missing'
+        env:
+          REASON: ${{ steps.outcome.outputs.reason }}
+        run: |
+          echo "::error::${REASON}"
+          exit 1
+
+      - name: Stamp the review with how it ran
+        # Best-effort: a failed footer must not red-X a review that posted fine.
+        if: always() && steps.post.outcome == 'success'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ needs.detect.outputs.pr_number }}
+          MODEL: ${{ inputs.deep_model }}
+          BUDGET: ${{ inputs.deep_max_budget_usd }}
+          START: ${{ steps.timer.outputs.start }}
+          # The commit this review read, not the PR's head by now.
+          SHA: ${{ steps.pr.outputs.commit }}
+        run: |
+          DURATION=$(( $(date +%s) - START ))
+          BUDGET_LABEL="\$${BUDGET}"
+          COMMENT_ID=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments?per_page=100" \
+            --jq '[.[] | select(.user.login == "github-actions[bot]") | select(.body | contains("<!-- claude-deep-review -->"))] | last | .id')
+          [ -n "$COMMENT_ID" ] && [ "$COMMENT_ID" != "null" ] || exit 0
+          gh api "repos/${REPO}/issues/comments/${COMMENT_ID}" --jq '.body' \
+            | awk '/^<sub>⏱️/{exit} {print}' >"${RUNNER_TEMP}/deep.md"
+          # shellcheck disable=SC2016
+          printf '\n---\n<sub>⏱️ %dm %ds · %s · budget-cap: %s · reviewed [`%s`](https://github.com/%s/pull/%s/commits/%s) · %s</sub>\n' \
+            "$(( DURATION / 60 ))" "$(( DURATION % 60 ))" "$MODEL" "$BUDGET_LABEL" \
+            "${SHA:0:7}" "$REPO" "$PR_NUMBER" "$SHA" "$(date -u '+%Y-%m-%d %H:%M UTC')" \
+            >>"${RUNNER_TEMP}/deep.md"
+          gh api "repos/${REPO}/issues/comments/${COMMENT_ID}" -X PATCH -F body=@"${RUNNER_TEMP}/deep.md"
+
+  # `fix` is split in two so the fork guard is ONE job-level condition rather than
+  # the same expression repeated on every step.
+  fix-declined:
+    name: Decline a fix on a fork
+    needs: detect
+    if: needs.detect.outputs.command == 'fix' && needs.detect.outputs.is_fork == 'true' && !inputs.allow_fork_fix
+    runs-on: ubuntu-24.04
+    permissions:
+      pull-requests: write
+      issues: write
+    steps:
+      - name: Say why it will not run
+        # Posted, not silent: someone asked, and the reason is actionable.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ needs.detect.outputs.pr_number }}
+        run: |
+          # The markdown below holds backticks, which shellcheck reads as a command
+          # substitution that will not expand. It is literal text.
+          # shellcheck disable=SC2016
+          {
+            echo '<!-- claude-fix -->'
+            echo
+            echo '**`@claude fix` does not run on a pull request from a fork.**'
+            echo
+            echo "A fix run checks out the pull request's own code with permission to write"
+            echo 'to this repository, so on a fork that would execute untrusted code against'
+            echo 'our credentials. Apply the change by hand, or re-open the work from a branch'
+            echo 'in this repository.'
+          } >"${RUNNER_TEMP}/declined.md"
+          gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file "${RUNNER_TEMP}/declined.md"
+          echo "::notice::Declined: the head is in another repository and allow_fork_fix is false."
+
+  fix:
+    name: Generate a fix
+    needs: detect
+    if: needs.detect.outputs.command == 'fix' && (needs.detect.outputs.is_fork != 'true' || inputs.allow_fork_fix)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    # Above all here: two runs at once would race on the same claude/fix-N branch.
+    concurrency:
+      group: code-review-fix-${{ needs.detect.outputs.pr_number }}
+      cancel-in-progress: false
+    permissions:
+      # The only tier with write access: it pushes a branch and opens a PR.
+      contents: write
+      packages: read # an install may pull from GitHub Packages
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
+    steps:
+      - name: Checkout the PR head
+        uses: actions/checkout@v7
+        with:
+          # The number was validated as digits in `detect`.
+          ref: refs/pull/${{ needs.detect.outputs.pr_number }}/head
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        if: inputs.fix_install_command != ''
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: ${{ inputs.node_version_file }}
+
+      - name: Install dependencies
+        # Opt-in, and the reason it is opt-in: this executes package scripts from
+        # the pull request under review.
+        if: inputs.fix_install_command != ''
+        env:
+          INSTALL_COMMAND: ${{ inputs.fix_install_command }}
+          # For a registry `.npmrc` reads it from, e.g. `_authToken=${GITHUB_TOKEN}`.
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          echo "Running the caller's install command before the fixer starts."
+          # The value comes from the caller's workflow file, never from an event
+          # payload. On a review event that file is the PR's own version — but a PR
+          # author who can change it can run anything there anyway.
+          eval "$INSTALL_COMMAND"
+
+      - name: Checkout the prompt from the default branch
+        # Same reasoning as the qa tier: never a prompt the PR can rewrite. After the
+        # install, so the install's own writes cannot replace it — though a process it
+        # leaves running still could, which is why forks are refused by default.
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: .review-prompts
+          persist-credentials: false
+          sparse-checkout: ${{ inputs.fix_prompt_file }}
+          sparse-checkout-cone-mode: false
+
+      - name: Hand the model its prompt and the request
+        env:
+          PROMPT_FILE: ${{ inputs.fix_prompt_file }}
+          # Same as the qa tier: the triggering comment, as data.
+          REQUEST_BODY: ${{ github.event.comment.body || github.event.review.body }}
+          REQUEST_URL: ${{ github.event.comment.html_url || github.event.review.html_url }}
+          REQUEST_PATH: ${{ github.event.comment.path }}
+          REQUEST_LINE: ${{ github.event.comment.line || github.event.comment.original_line }}
+        run: |
+          # A plain repo path: `./x` matches nothing in a sparse checkout, `../x` escapes it.
+          case "$PROMPT_FILE" in
+            /* | ./* | *..*)
+              echo "::error::Give the prompt as a plain repo path (like .github/review/prompts/qa.md), not '${PROMPT_FILE}'."
+              exit 1 ;;
+          esac
+          if [ ! -s ".review-prompts/${PROMPT_FILE}" ]; then
+            echo "::error::${PROMPT_FILE} is not on the default branch; this tier only follows a prompt the PR cannot change."
+            exit 1
+          fi
+          {
+            echo "From: ${REQUEST_URL}"
+            [ -z "$REQUEST_PATH" ] || echo "On: ${REQUEST_PATH}:${REQUEST_LINE}"
+            echo
+            printf '%s\n' "$REQUEST_BODY"
+          } >.review-prompts/request.md
+          # This tier commits: keep the prompt and the request out of `git add -A`.
+          echo '/.review-prompts/' >>.git/info/exclude
+
+      - name: Record start time
+        id: timer
+        run: echo "start=$(date +%s)" >>"$GITHUB_OUTPUT"
+
+      - name: Generate the fix
+        id: fix
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.claude_code_oauth_token }}
+          show_full_output: true
+          additional_permissions: |
+            actions: read
+          claude_args: |
+            --model ${{ inputs.fix_model }} --max-turns ${{ inputs.fix_max_turns }} --max-budget-usd ${{ inputs.fix_max_budget_usd }} --allowedTools "${{ inputs.fix_allowed_tools }}"
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR_NUMBER: ${{ needs.detect.outputs.pr_number }}
+            FIX_BRANCH: claude/fix-${{ needs.detect.outputs.pr_number }}
+
+            Read .review-prompts/${{ inputs.fix_prompt_file }} and follow it exactly.
+            The triggering comment is in .review-prompts/request.md; it may carry
+            instructions after "@claude fix" — prefer those over anything you would
+            otherwise have chosen to change.
+
+            These hold whatever the prompt file says:
+            - Only touch files already in this pull request's diff.
+            - Stage only the files you changed, by path (`git add <path>`) — never
+              `git add -A`, `git add .` or `git commit -a`. Before you start, `.claude/`,
+              `CLAUDE.md`, `CLAUDE.local.md`, `.mcp.json`, `.claude.json`, `.gitmodules`,
+              `.ripgreprc` and `.husky/` were restored from the base branch, unstaged;
+              they must not ride along.
+            - Commit on FIX_BRANCH, and open a pull request against the branch under
+              review — never against the default branch.
+            - Never merge anything. A human approves the fix.
+            - Comment on PR_NUMBER with a link to the fix, starting the body with the
+              marker <!-- claude-fix -->.
+
+      - name: Stamp the fix comment with how it ran
+        continue-on-error: true
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ needs.detect.outputs.pr_number }}
+          MODEL: ${{ inputs.fix_model }}
+          BUDGET: ${{ inputs.fix_max_budget_usd }}
+          START: ${{ steps.timer.outputs.start }}
+        run: |
+          DURATION=$(( $(date +%s) - START ))
+          BUDGET_LABEL="\$${BUDGET}"
+          # Only the fix comment this run posted. The model posts it through the
+          # action's app token, so it is authored by claude[bot] — never a human
+          # quote-reply — and a run that posted nothing must not re-stamp an older one.
+          SINCE=$(date -u -d "@${START}" '+%Y-%m-%dT%H:%M:%SZ')
+          COMMENT_ID=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments?per_page=100" \
+            --jq "[.[] | select(.user.login == \"claude[bot]\") | select(.created_at >= \"${SINCE}\") | select(.body | contains(\"<!-- claude-fix -->\"))] | last | .id")
+          [ -n "$COMMENT_ID" ] && [ "$COMMENT_ID" != "null" ] || exit 0
+          gh api "repos/${REPO}/issues/comments/${COMMENT_ID}" --jq '.body' \
+            | awk '/^<sub>⏱️/{exit} {print}' >"${RUNNER_TEMP}/fix.md"
+          printf '\n---\n<sub>⏱️ %dm %ds · %s · budget-cap: %s</sub>\n' \
+            "$(( DURATION / 60 ))" "$(( DURATION % 60 ))" "$MODEL" "$BUDGET_LABEL" \
+            >>"${RUNNER_TEMP}/fix.md"
+          gh api "repos/${REPO}/issues/comments/${COMMENT_ID}" -X PATCH -F body=@"${RUNNER_TEMP}/fix.md"
