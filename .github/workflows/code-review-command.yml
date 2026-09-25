@@ -109,8 +109,11 @@ on:
       fix_install_command:
         description: |
           Optional command run before the fixer starts, for repos where edits are
-          meaningless without dependencies. Leave EMPTY unless needed: it executes
-          package scripts from the PR under review.
+          meaningless without dependencies. It sets up its own package manager — the
+          runner ships npm and yarn, not pnpm (e.g. `corepack enable && pnpm install
+          --frozen-lockfile`) — and gets `GITHUB_TOKEN` for a private registry such as
+          GitHub Packages. Leave EMPTY unless needed: it executes package scripts from
+          the PR under review.
         required: false
         type: string
         default: ''
@@ -610,6 +613,7 @@ jobs:
     permissions:
       # The only tier with write access: it pushes a branch and opens a PR.
       contents: write
+      packages: read # an install may pull from GitHub Packages
       pull-requests: write
       issues: write
       id-token: write
@@ -634,10 +638,13 @@ jobs:
         if: inputs.fix_install_command != ''
         env:
           INSTALL_COMMAND: ${{ inputs.fix_install_command }}
+          # For a registry `.npmrc` reads it from, e.g. `_authToken=${GITHUB_TOKEN}`.
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           echo "Running the caller's install command before the fixer starts."
-          # The value comes from the caller's own workflow file, so it is as trusted
-          # as the workflow itself — never from an event payload.
+          # The value comes from the caller's workflow file, never from an event
+          # payload. On a review event that file is the PR's own version — but a PR
+          # author who can change it can run anything there anyway.
           eval "$INSTALL_COMMAND"
 
       - name: Checkout the prompt from the default branch
