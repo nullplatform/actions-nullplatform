@@ -826,7 +826,9 @@ jobs:
         run: |
           DURATION=$(( $(date +%s) - START ))
           BUDGET_LABEL="\$${BUDGET}"
-          # Same as the qa tier: only a claude[bot] comment this run posted.
+          # Only the fix comment this run posted. The model posts it through the
+          # action's app token, so it is authored by claude[bot] — never a human
+          # quote-reply — and a run that posted nothing must not re-stamp an older one.
           SINCE=$(date -u -d "@${START}" '+%Y-%m-%dT%H:%M:%SZ')
           COMMENT_ID=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments?per_page=100" \
             --jq "[.[] | select(.user.login == \"claude[bot]\") | select(.created_at >= \"${SINCE}\") | select(.body | contains(\"<!-- claude-fix -->\"))] | last | .id")
