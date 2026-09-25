@@ -322,9 +322,15 @@ jobs:
           sparse-checkout: ${{ inputs.qa_prompt_file }}
           sparse-checkout-cone-mode: false
 
-      - name: Require the prompt on the default branch
+      - name: Hand the model its prompt and the request
         env:
           PROMPT_FILE: ${{ inputs.qa_prompt_file }}
+          # The triggering comment, as data. The model cannot otherwise see an inline
+          # review comment, and a queued run would answer whichever `@claude` is newest.
+          REQUEST_BODY: ${{ github.event.comment.body || github.event.review.body }}
+          REQUEST_URL: ${{ github.event.comment.html_url || github.event.review.html_url }}
+          REQUEST_PATH: ${{ github.event.comment.path }}
+          REQUEST_LINE: ${{ github.event.comment.line || github.event.comment.original_line }}
         run: |
           # A plain repo path: `./x` matches nothing in a sparse checkout, `../x` escapes it.
           case "$PROMPT_FILE" in
@@ -336,6 +342,12 @@ jobs:
             echo "::error::${PROMPT_FILE} is not on the default branch; this tier only follows a prompt the PR cannot change."
             exit 1
           fi
+          {
+            echo "From: ${REQUEST_URL}"
+            [ -z "$REQUEST_PATH" ] || echo "On: ${REQUEST_PATH}:${REQUEST_LINE}"
+            echo
+            printf '%s\n' "$REQUEST_BODY"
+          } >.review-prompts/request.md
 
       - name: Record start time
         id: timer
@@ -359,7 +371,9 @@ jobs:
             PR_NUMBER: ${{ needs.detect.outputs.pr_number }}
 
             Read .review-prompts/${{ inputs.qa_prompt_file }} and follow it exactly.
-            Answer the question asked after "@claude" in the triggering comment.
+            The triggering comment is in .review-prompts/request.md: its link, its file
+            and line when it is an inline comment, then its text. Answer the question it
+            asks after "@claude" — not any other @claude comment on the PR.
             Post your answer as a PR comment beginning with the marker <!-- claude-qa -->.
 
       - name: Stamp the answer with how it ran
@@ -421,9 +435,14 @@ jobs:
           sparse-checkout: ${{ inputs.deep_prompt_file }}
           sparse-checkout-cone-mode: false
 
-      - name: Require the prompt on the default branch
+      - name: Hand the model its prompt and the request
         env:
           PROMPT_FILE: ${{ inputs.deep_prompt_file }}
+          # Same as the qa tier: the triggering comment, as data.
+          REQUEST_BODY: ${{ github.event.comment.body || github.event.review.body }}
+          REQUEST_URL: ${{ github.event.comment.html_url || github.event.review.html_url }}
+          REQUEST_PATH: ${{ github.event.comment.path }}
+          REQUEST_LINE: ${{ github.event.comment.line || github.event.comment.original_line }}
         run: |
           # A plain repo path: `./x` matches nothing in a sparse checkout, `../x` escapes it.
           case "$PROMPT_FILE" in
@@ -435,6 +454,12 @@ jobs:
             echo "::error::${PROMPT_FILE} is not on the default branch; this tier only follows a prompt the PR cannot change."
             exit 1
           fi
+          {
+            echo "From: ${REQUEST_URL}"
+            [ -z "$REQUEST_PATH" ] || echo "On: ${REQUEST_PATH}:${REQUEST_LINE}"
+            echo
+            printf '%s\n' "$REQUEST_BODY"
+          } >.review-prompts/request.md
 
       - name: Resolve the ref to take shared scripts from
         id: scripts
@@ -504,7 +529,8 @@ jobs:
             REVIEW_BODY_FILE: ${{ github.workspace }}/.claude-deep-review-body.md
 
             Read .review-prompts/${{ inputs.deep_prompt_file }} and follow it exactly.
-            The triggering comment may carry instructions after "@claude deep".
+            The triggering comment is in .review-prompts/request.md; it may carry
+            instructions after "@claude deep".
 
       - name: Classify the outcome
         id: outcome
@@ -703,9 +729,14 @@ jobs:
           sparse-checkout: ${{ inputs.fix_prompt_file }}
           sparse-checkout-cone-mode: false
 
-      - name: Require the prompt on the default branch
+      - name: Hand the model its prompt and the request
         env:
           PROMPT_FILE: ${{ inputs.fix_prompt_file }}
+          # Same as the qa tier: the triggering comment, as data.
+          REQUEST_BODY: ${{ github.event.comment.body || github.event.review.body }}
+          REQUEST_URL: ${{ github.event.comment.html_url || github.event.review.html_url }}
+          REQUEST_PATH: ${{ github.event.comment.path }}
+          REQUEST_LINE: ${{ github.event.comment.line || github.event.comment.original_line }}
         run: |
           # A plain repo path: `./x` matches nothing in a sparse checkout, `../x` escapes it.
           case "$PROMPT_FILE" in
@@ -717,7 +748,13 @@ jobs:
             echo "::error::${PROMPT_FILE} is not on the default branch; this tier only follows a prompt the PR cannot change."
             exit 1
           fi
-          # This tier commits: keep the prompt out of `git add -A`.
+          {
+            echo "From: ${REQUEST_URL}"
+            [ -z "$REQUEST_PATH" ] || echo "On: ${REQUEST_PATH}:${REQUEST_LINE}"
+            echo
+            printf '%s\n' "$REQUEST_BODY"
+          } >.review-prompts/request.md
+          # This tier commits: keep the prompt and the request out of `git add -A`.
           echo '/.review-prompts/' >>.git/info/exclude
 
       - name: Record start time
@@ -740,8 +777,9 @@ jobs:
             FIX_BRANCH: claude/fix-${{ needs.detect.outputs.pr_number }}
 
             Read .review-prompts/${{ inputs.fix_prompt_file }} and follow it exactly.
-            The triggering comment may carry instructions after "@claude fix"; prefer
-            those over anything you would otherwise have chosen to change.
+            The triggering comment is in .review-prompts/request.md; it may carry
+            instructions after "@claude fix" — prefer those over anything you would
+            otherwise have chosen to change.
 
             These hold whatever the prompt file says:
             - Only touch files already in this pull request's diff.
