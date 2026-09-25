@@ -218,6 +218,17 @@ jobs:
         run: |
           bash .review-scripts/.github/scripts/review/upsert-comment.sh "$MARKER" "$BODY_FILE"
 
+      - name: Clear a stale "did not run" note
+        # The review exists now, so an earlier run's note no longer holds.
+        if: always() && steps.post.outcome == 'success'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          bash .review-scripts/.github/scripts/review/delete-comments.sh '<!-- claude-review-unavailable -->'
+
       - name: Say so when the review could not run
         # A spend or rate limit is not a defect in this PR. Its own marker, so a real
         # review from an earlier run is left intact.
@@ -234,7 +245,7 @@ jobs:
             echo
             echo "**The automated review did not run.** $REASON"
             echo
-            echo 'Nothing is wrong with this PR. Re-run the job once the limit resets.'
+            echo "Nothing is wrong with this PR. Once the limit resets, re-run the PR's most recent run of this check."
           } >"${RUNNER_TEMP}/review-unavailable.md"
           bash .review-scripts/.github/scripts/review/upsert-comment.sh \
             '<!-- claude-review-unavailable -->' "${RUNNER_TEMP}/review-unavailable.md"
