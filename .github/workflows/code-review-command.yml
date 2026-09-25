@@ -399,6 +399,7 @@ jobs:
       actions: read
     steps:
       - name: Checkout the PR head
+        id: pr # its `commit` output is the commit this review reads
         uses: actions/checkout@v7
         with:
           ref: refs/pull/${{ needs.detect.outputs.pr_number }}/head
@@ -516,8 +517,34 @@ jobs:
           bash .review-scripts/.github/scripts/review/upsert-comment.sh \
             '<!-- claude-deep-review -->' "$BODY_FILE"
 
+      - name: Clear a stale "did not run" note
+        # The review exists now, so an earlier request's note no longer holds.
+        if: always() && steps.post.outcome == 'success'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ needs.detect.outputs.pr_number }}
+        run: |
+          bash .review-scripts/.github/scripts/review/delete-comments.sh '<!-- claude-deep-review-unavailable -->'
+
+      - name: Notify the author
+        # A repeat request edits the review in place, and an edit notifies no one.
+        if: always() && steps.post.outcome == 'success'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ needs.detect.outputs.pr_number }}
+          HEAD_SHA: ${{ steps.pr.outputs.commit }}
+        run: |
+          bash .review-scripts/.github/scripts/review/notify-author.sh \
+            '<!-- claude-deep-review-ping -->' '<!-- claude-deep-review -->' 'deep review'
+
       - name: Say so when the review could not run
         # Someone ASKED for this one, so silence would read as the request being lost.
+        # Its own marker — the auto tier's note is a different run's news — and posted
+        # fresh each time, since an edited comment notifies no one.
         if: always() && steps.outcome.outputs.status == 'unavailable'
         continue-on-error: true
         env:
@@ -527,14 +554,14 @@ jobs:
           REASON: ${{ steps.outcome.outputs.reason }}
         run: |
           {
-            echo '<!-- claude-review-unavailable -->'
+            echo '<!-- claude-deep-review-unavailable -->'
             echo
             echo "**The deep review you asked for did not run.** $REASON"
             echo
             echo 'Nothing is wrong with this PR. Ask again once the limit resets.'
           } >"${RUNNER_TEMP}/unavailable.md"
-          bash .review-scripts/.github/scripts/review/upsert-comment.sh \
-            '<!-- claude-review-unavailable -->' "${RUNNER_TEMP}/unavailable.md"
+          bash .review-scripts/.github/scripts/review/delete-comments.sh '<!-- claude-deep-review-unavailable -->'
+          gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" -F body=@"${RUNNER_TEMP}/unavailable.md" >/dev/null
 
       - name: Fail when the review is missing for no known reason
         if: always() && steps.outcome.outputs.status == 'missing'
