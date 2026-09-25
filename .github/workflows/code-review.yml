@@ -149,6 +149,13 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: bash .review-scripts/.github/scripts/review/ci-status.sh
 
+      - name: Clear any review body the checkout brought in
+        # The outcome step reads a non-empty body as "the model answered", so this
+        # run must be its only writer. A body committed in the PR (or on the default
+        # branch) would otherwise be posted — and could request an escalation —
+        # whenever the model is rate-limited or crashes.
+        run: rm -rf -- "${GITHUB_WORKSPACE}/.claude-review-body.md"
+
       - name: Run the review
         id: review
         # Advisory: a review that could not be produced is a missing review, not a
