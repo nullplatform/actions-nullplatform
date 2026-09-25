@@ -91,6 +91,13 @@ jobs:
     name: Auto Review
     runs-on: ubuntu-24.04
     timeout-minutes: ${{ inputs.timeout_minutes }}
+    # One review per PR at a time: a newer push cancels the run in flight, so an
+    # older run can never finish last and overwrite the review of a newer commit.
+    # A caller must not put this same group on its calling job — the two would
+    # wait on each other.
+    concurrency:
+      group: code-review-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
     permissions:
       contents: read
       checks: write # the outcome is published as its own check run
@@ -109,17 +116,19 @@ jobs:
       - name: Resolve the ref to take shared scripts from
         id: scripts
         # A caller pinning this workflow to a tag expects the scripts pinned too.
-        # `job_workflow_ref` is this reusable workflow's own path@ref, so the part
-        # after the last `@` is the version the caller asked for.
+        # `job.workflow_sha` is the commit this reusable workflow itself was loaded
+        # from, so the scripts match it exactly — even if the tag moves mid-run.
         env:
-          JOB_WORKFLOW_REF: ${{ github.job_workflow_ref }}
+          WORKFLOW_SHA: ${{ job.workflow_sha }}
           OVERRIDE: ${{ inputs.scripts_ref }}
         run: |
-          if [ -n "$OVERRIDE" ]; then
-            echo "ref=$OVERRIDE" >>"$GITHUB_OUTPUT"
-          else
-            echo "ref=${JOB_WORKFLOW_REF##*@}" >>"$GITHUB_OUTPUT"
+          ref="${OVERRIDE:-$WORKFLOW_SHA}"
+          # An empty ref would check out the default branch, silently undoing the pin.
+          if [ -z "$ref" ]; then
+            echo "::error::Could not tell which commit this workflow runs from (job.workflow_sha is empty); refusing to take the shared scripts from the default branch."
+            exit 1
           fi
+          echo "ref=$ref" >>"$GITHUB_OUTPUT"
 
       - name: Checkout shared review scripts
         uses: actions/checkout@v7
@@ -146,6 +155,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: bash .review-scripts/.github/scripts/review/ci-status.sh
+
+      - name: Clear any review body the checkout brought in
+        # The outcome step reads a non-empty body as "the model answered", so this
+        # run must be its only writer. A body committed in the PR (or on the default
+        # branch) would otherwise be posted — and could request an escalation —
+        # whenever the model is rate-limited or crashes.
+        run: rm -rf -- "${GITHUB_WORKSPACE}/.claude-review-body.md"
 
       - name: Run the review
         id: review
@@ -293,12 +309,14 @@ jobs:
           MODEL: ${{ inputs.model }}
           BUDGET: ${{ inputs.max_budget_usd }}
           START: ${{ steps.timer.outputs.start }}
+          # The commit this run reviewed, not the PR's current head: the footer says
+          # what was reviewed, and the head may have moved on while this ran.
+          SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           DURATION=$(( $(date +%s) - START ))
           # Assembled here rather than written as `$%s` in the format string, which
           # would be a literal `$` inside single quotes (shellcheck SC2016).
           BUDGET_LABEL="\$${BUDGET}"
-          SHA=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json headRefOid --jq '.headRefOid')
           COMMENT_ID=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments?per_page=100" \
             --jq "[.[] | select(.user.login == \"github-actions[bot]\") | select(.body | contains(\"${MARKER}\"))] | last | .id")
           if [ -n "$COMMENT_ID" ] && [ "$COMMENT_ID" != "null" ]; then

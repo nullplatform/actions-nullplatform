@@ -25,14 +25,14 @@ jobs:
         run: |
           # actionlint 1.7.12 still ships the old metadata for create-github-app-token: it has client-id
           # since v2 and app-id is deprecated there, so its two complaints about them are wrong.
-          # It also does not know `github.job_workflow_ref`, which GitHub defines for a job running a
-          # reusable workflow — code-review.yml reads it to take its shared scripts from the same ref
-          # the caller pinned the workflow to.
+          # It also predates the `job.workflow_*` properties GitHub added for reusable workflows in
+          # September 2026 — code-review.yml reads `job.workflow_sha` to take its shared scripts from
+          # the same commit the caller pinned the workflow to.
           ./actionlint \
             -ignore 'unknown permission scope "models"' \
             -ignore 'input "client-id" is not defined in action "actions/create-github-app-token' \
             -ignore 'missing input "app-id" which is required by action "actions/create-github-app-token' \
-            -ignore 'property "job_workflow_ref" is not defined in object type'
+            -ignore 'property "workflow_sha" is not defined in object type'
 
   secret-scan:
     name: Scan for credentials
