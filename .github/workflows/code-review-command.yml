@@ -85,10 +85,13 @@ on:
         type: string
         default: '5.00'
       deep_allowed_tools:
-        description: 'The deep tier writes to a file and this workflow posts it, so it needs Write, not `gh pr comment`.'
+        description: |
+          The deep tier writes its body and this workflow posts it. Reads inside the
+          workspace need no rule; the one write allowed is the body — a bare `Write`
+          (or `Read`) approves EVERY path, including the shared scripts later steps run.
         required: false
         type: string
-        default: 'Bash(gh pr diff:*),Bash(gh pr view:*),Read,Glob,Grep,Write'
+        default: 'Bash(gh pr diff:*),Bash(gh pr view:*),Edit(/.claude-deep-review-body.md)'
       fix_model:
         required: false
         type: string
