@@ -39,10 +39,14 @@ on:
         type: string
         default: '1.00'
       allowed_tools:
-        description: 'Tools the reviewer may use. Read-only by default — this pass never writes to the repo.'
+        description: |
+          Tools the reviewer may use. Reads inside the workspace need no rule. The one
+          write allowed is the review body: a bare `Write` (or `Read`) approves EVERY
+          path, including the shared scripts the later steps run with the job token.
+          `Edit(...)` rules govern the Write tool; a leading `/` anchors at the workspace.
         required: false
         type: string
-        default: 'Bash(gh pr diff:*),Bash(gh pr view:*),Read,Glob,Grep,Write'
+        default: 'Bash(gh pr diff:*),Bash(gh pr view:*),Edit(/.claude-review-body.md)'
       allowed_bots:
         description: |
           Comma-separated bot actors whose pushes still get a review. Without this the
