@@ -572,7 +572,9 @@ jobs:
           exit 1
 
       - name: Stamp the review with how it ran
+        # Best-effort: a failed footer must not red-X a review that posted fine.
         if: always() && steps.post.outcome == 'success'
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -580,10 +582,11 @@ jobs:
           MODEL: ${{ inputs.deep_model }}
           BUDGET: ${{ inputs.deep_max_budget_usd }}
           START: ${{ steps.timer.outputs.start }}
+          # The commit this review read, not the PR's head by now.
+          SHA: ${{ steps.pr.outputs.commit }}
         run: |
           DURATION=$(( $(date +%s) - START ))
           BUDGET_LABEL="\$${BUDGET}"
-          SHA=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json headRefOid --jq '.headRefOid')
           COMMENT_ID=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments?per_page=100" \
             --jq '[.[] | select(.user.login == "github-actions[bot]") | select(.body | contains("<!-- claude-deep-review -->"))] | last | .id')
           [ -n "$COMMENT_ID" ] && [ "$COMMENT_ID" != "null" ] || exit 0
