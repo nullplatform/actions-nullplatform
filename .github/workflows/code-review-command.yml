@@ -10,7 +10,8 @@ name: code-review-command
 # one place they collapse into.
 #
 # What stays with the caller: the prompt files, since what a good answer looks
-# like is the repo's own business.
+# like is the repo's own business. They are read from the caller's default
+# branch, never from the PR under review — the model is told to follow them.
 #
 # `fix` is the one tier that WRITES. It needs `contents: write`, it pushes a
 # branch and opens a PR, and a caller may ask it to install dependencies first —
@@ -23,15 +24,15 @@ on:
   workflow_call:
     inputs:
       qa_prompt_file:
-        description: 'Path in the CALLING repo to the prompt for answering a question.'
+        description: 'Path in the CALLING repo to the prompt for answering a question. Read from the default branch.'
         required: true
         type: string
       deep_prompt_file:
-        description: 'Path in the CALLING repo to the prompt for a deep review.'
+        description: 'Path in the CALLING repo to the prompt for a deep review. Read from the default branch.'
         required: true
         type: string
       fix_prompt_file:
-        description: 'Path in the CALLING repo to the prompt for generating a fix.'
+        description: 'Path in the CALLING repo to the prompt for generating a fix. Read from the default branch.'
         required: true
         type: string
       allowed_associations:
@@ -266,6 +267,29 @@ jobs:
           ref: refs/pull/${{ needs.detect.outputs.pr_number }}/head
           fetch-depth: 0
 
+      - name: Checkout the prompt from the default branch
+        # The PR head is its author's to change — on a fork, anyone's — while this
+        # run holds secrets and write scopes. The action restores only the CLI's own
+        # startup files (.claude/, CLAUDE.md, …) from the base, so the instructions
+        # the model is told to follow must come from a ref the PR cannot touch.
+        # After the PR checkout, which would otherwise clean this directory away.
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: .review-prompts
+          persist-credentials: false
+          sparse-checkout: ${{ inputs.qa_prompt_file }}
+          sparse-checkout-cone-mode: false
+
+      - name: Require the prompt on the default branch
+        env:
+          PROMPT_FILE: ${{ inputs.qa_prompt_file }}
+        run: |
+          if [ ! -s ".review-prompts/${PROMPT_FILE}" ]; then
+            echo "::error::${PROMPT_FILE} is not on the default branch; this tier only follows a prompt the PR cannot change."
+            exit 1
+          fi
+
       - name: Record start time
         id: timer
         run: echo "start=$(date +%s)" >>"$GITHUB_OUTPUT"
@@ -283,7 +307,7 @@ jobs:
             REPO: ${{ github.repository }}
             PR_NUMBER: ${{ needs.detect.outputs.pr_number }}
 
-            Read ${{ inputs.qa_prompt_file }} and follow it exactly.
+            Read .review-prompts/${{ inputs.qa_prompt_file }} and follow it exactly.
             Answer the question asked after "@claude" in the triggering comment.
             Post your answer as a PR comment beginning with the marker <!-- claude-qa -->.
 
@@ -329,6 +353,25 @@ jobs:
         with:
           ref: refs/pull/${{ needs.detect.outputs.pr_number }}/head
           fetch-depth: 0
+
+      - name: Checkout the prompt from the default branch
+        # Same reasoning as the qa tier: never instructions the PR can rewrite.
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: .review-prompts
+          persist-credentials: false
+          sparse-checkout: ${{ inputs.deep_prompt_file }}
+          sparse-checkout-cone-mode: false
+
+      - name: Require the prompt on the default branch
+        env:
+          PROMPT_FILE: ${{ inputs.deep_prompt_file }}
+        run: |
+          if [ ! -s ".review-prompts/${PROMPT_FILE}" ]; then
+            echo "::error::${PROMPT_FILE} is not on the default branch; this tier only follows a prompt the PR cannot change."
+            exit 1
+          fi
 
       - name: Resolve the ref to take shared scripts from
         id: scripts
@@ -391,7 +434,7 @@ jobs:
             TRIGGER: on request (@claude deep)
             REVIEW_BODY_FILE: ${{ github.workspace }}/.claude-deep-review-body.md
 
-            Read ${{ inputs.deep_prompt_file }} and follow it exactly.
+            Read .review-prompts/${{ inputs.deep_prompt_file }} and follow it exactly.
             The triggering comment may carry instructions after "@claude deep".
 
       - name: Classify the outcome
@@ -543,6 +586,28 @@ jobs:
           # as the workflow itself — never from an event payload.
           eval "$INSTALL_COMMAND"
 
+      - name: Checkout the prompt from the default branch
+        # Same reasoning as the qa tier: never instructions the PR can rewrite. After
+        # the install, so no package script from the PR runs once it is in place.
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: .review-prompts
+          persist-credentials: false
+          sparse-checkout: ${{ inputs.fix_prompt_file }}
+          sparse-checkout-cone-mode: false
+
+      - name: Require the prompt on the default branch
+        env:
+          PROMPT_FILE: ${{ inputs.fix_prompt_file }}
+        run: |
+          if [ ! -s ".review-prompts/${PROMPT_FILE}" ]; then
+            echo "::error::${PROMPT_FILE} is not on the default branch; this tier only follows a prompt the PR cannot change."
+            exit 1
+          fi
+          # This tier commits: keep the prompt out of `git add -A`.
+          echo '/.review-prompts/' >>.git/info/exclude
+
       - name: Record start time
         id: timer
         run: echo "start=$(date +%s)" >>"$GITHUB_OUTPUT"
@@ -562,7 +627,7 @@ jobs:
             PR_NUMBER: ${{ needs.detect.outputs.pr_number }}
             FIX_BRANCH: claude/fix-${{ needs.detect.outputs.pr_number }}
 
-            Read ${{ inputs.fix_prompt_file }} and follow it exactly.
+            Read .review-prompts/${{ inputs.fix_prompt_file }} and follow it exactly.
             The triggering comment may carry instructions after "@claude fix"; prefer
             those over anything you would otherwise have chosen to change.
 
