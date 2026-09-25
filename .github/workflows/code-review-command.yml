@@ -340,8 +340,12 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.claude_code_oauth_token }}
           show_full_output: true
+          # The model posts its own answer, so it keeps the Claude App token — but
+          # read-only on code. That token defaults to `contents: write`, and the
+          # model can read it (it is in the git remote and `GH_TOKEN`).
           additional_permissions: |
             actions: read
+            contents: read
           claude_args: |
             --model ${{ inputs.qa_model }} --max-turns ${{ inputs.qa_max_turns }} --max-budget-usd ${{ inputs.qa_max_budget_usd }} --allowedTools "${{ inputs.qa_allowed_tools }}"
           prompt: |
@@ -390,10 +394,8 @@ jobs:
       cancel-in-progress: false
     permissions:
       contents: read
-      checks: write
       pull-requests: write
       issues: write
-      id-token: write
       actions: read
     steps:
       - name: Checkout the PR head
@@ -475,9 +477,10 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.claude_code_oauth_token }}
+          # Same as the auto tier: the model only reads and the workflow posts, so the
+          # job's own token — not a Claude App one, which defaults to `contents: write`.
+          github_token: ${{ github.token }}
           show_full_output: true
-          additional_permissions: |
-            actions: read
           claude_args: |
             --model ${{ inputs.deep_model }} --max-turns ${{ inputs.deep_max_turns }} --max-budget-usd ${{ inputs.deep_max_budget_usd }} --allowedTools "${{ inputs.deep_allowed_tools }}"
           prompt: |
