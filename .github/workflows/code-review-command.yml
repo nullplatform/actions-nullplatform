@@ -332,15 +332,18 @@ jobs:
 
       - name: Resolve the ref to take shared scripts from
         id: scripts
+        # Same as the auto tier: the commit this workflow was loaded from.
         env:
-          JOB_WORKFLOW_REF: ${{ github.job_workflow_ref }}
+          WORKFLOW_SHA: ${{ job.workflow_sha }}
           OVERRIDE: ${{ inputs.scripts_ref }}
         run: |
-          if [ -n "$OVERRIDE" ]; then
-            echo "ref=$OVERRIDE" >>"$GITHUB_OUTPUT"
-          else
-            echo "ref=${JOB_WORKFLOW_REF##*@}" >>"$GITHUB_OUTPUT"
+          ref="${OVERRIDE:-$WORKFLOW_SHA}"
+          # An empty ref would check out the default branch, silently undoing the pin.
+          if [ -z "$ref" ]; then
+            echo "::error::Could not tell which commit this workflow runs from (job.workflow_sha is empty); refusing to take the shared scripts from the default branch."
+            exit 1
           fi
+          echo "ref=$ref" >>"$GITHUB_OUTPUT"
 
       - name: Checkout shared review scripts
         uses: actions/checkout@v7
