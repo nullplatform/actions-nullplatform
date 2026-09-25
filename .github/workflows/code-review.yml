@@ -246,8 +246,9 @@ jobs:
 
       - name: Publish the outcome as a check
         # A job cannot report `neutral`, so publish a companion check that can.
-        # Best-effort: never red-X a job over its own status report.
-        if: always() && steps.outcome.outputs.status != ''
+        # Best-effort: never red-X a job over its own status report. Not for a
+        # review that never ran: the job's own failure or cancellation says it.
+        if: always() && steps.outcome.outputs.status != '' && steps.outcome.outputs.status != 'not_run'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
@@ -286,12 +287,13 @@ jobs:
       - name: Detect an escalation request
         id: escalate
         # Reported as an output; what escalation MEANS is the caller's decision.
+        # Only a body this run wrote (`ok`) can ask for it.
         if: always()
         env:
-          GH_TOKEN: ${{ github.token }}
+          STATUS: ${{ steps.outcome.outputs.status }}
           BODY_FILE: ${{ github.workspace }}/.claude-review-body.md
         run: |
-          if [ -s "$BODY_FILE" ] && grep -q '<!-- escalate-deep' "$BODY_FILE"; then
+          if [ "$STATUS" = ok ] && grep -q '<!-- escalate-deep' "$BODY_FILE"; then
             echo 'escalate=true' >>"$GITHUB_OUTPUT"
           else
             echo 'escalate=false' >>"$GITHUB_OUTPUT"

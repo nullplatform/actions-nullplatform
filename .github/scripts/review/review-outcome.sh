@@ -16,6 +16,9 @@
 #   skipped      the action deliberately self-skipped (its workflow-validation
 #                guard fires on any PR that edits this workflow). Not a failure.
 #   missing      no body and no recognised reason; fail loudly, as before.
+#   not_run      the review step itself never ran: an earlier step failed, or
+#                the run was cancelled or timed out. Nothing is posted — the
+#                job's own status already says what happened.
 set -euo pipefail
 
 exec_file="${1:-}"
@@ -27,6 +30,17 @@ emit() {
   printf 'reason=%s\n' "$2" >>"${GITHUB_OUTPUT:-/dev/stdout}"
   echo "review outcome: $1 — $2"
 }
+
+# Only a review step that ran can have answered. When it was skipped or
+# cancelled, a body on disk came from somewhere else — the checkout — and a
+# missing one says nothing about the action.
+case "$review_outcome" in
+  success | failure) ;;
+  *)
+    emit not_run "the review step did not run (${review_outcome:-no outcome})"
+    exit 0
+    ;;
+esac
 
 if [ -s "$body_file" ]; then
   emit ok "review body written"
