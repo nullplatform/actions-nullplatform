@@ -694,6 +694,11 @@ jobs:
 
             These hold whatever the prompt file says:
             - Only touch files already in this pull request's diff.
+            - Stage only the files you changed, by path (`git add <path>`) — never
+              `git add -A`, `git add .` or `git commit -a`. Before you start, `.claude/`,
+              `CLAUDE.md`, `CLAUDE.local.md`, `.mcp.json`, `.claude.json`, `.gitmodules`,
+              `.ripgreprc` and `.husky/` were restored from the base branch, unstaged;
+              they must not ride along.
             - Commit on FIX_BRANCH, and open a pull request against the branch under
               review — never against the default branch.
             - Never merge anything. A human approves the fix.
