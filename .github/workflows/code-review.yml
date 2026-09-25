@@ -106,7 +106,6 @@ jobs:
       contents: read
       checks: write # the outcome is published as its own check run
       pull-requests: write
-      id-token: write
       actions: read
     outputs:
       status: ${{ steps.outcome.outputs.status }}
@@ -176,10 +175,12 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.claude_code_oauth_token }}
+          # The job's own token, not a Claude App one: this pass only reads, and the
+          # workflow does the posting. The App token defaults to `contents: write`,
+          # and the OIDC exchange that mints it can skip a run silently.
+          github_token: ${{ github.token }}
           allowed_bots: ${{ inputs.allowed_bots }}
           show_full_output: true
-          additional_permissions: |
-            actions: read
           claude_args: |
             --model ${{ inputs.model }} --max-turns ${{ inputs.max_turns }} --max-budget-usd ${{ inputs.max_budget_usd }} --allowedTools "${{ inputs.allowed_tools }}"
           prompt: |
