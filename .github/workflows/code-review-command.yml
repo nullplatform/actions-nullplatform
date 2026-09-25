@@ -324,8 +324,12 @@ jobs:
         run: |
           DURATION=$(( $(date +%s) - START ))
           BUDGET_LABEL="\$${BUDGET}"
+          # Only the answer this run posted. The model posts it through the action's
+          # app token, so it is authored by claude[bot] — never a human quote-reply —
+          # and a run that posted nothing must not re-stamp an earlier answer.
+          SINCE=$(date -u -d "@${START}" '+%Y-%m-%dT%H:%M:%SZ')
           COMMENT_ID=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments?per_page=100" \
-            --jq '[.[] | select(.user.login == "github-actions[bot]") | select(.body | contains("<!-- claude-qa -->"))] | last | .id')
+            --jq "[.[] | select(.user.login == \"claude[bot]\") | select(.created_at >= \"${SINCE}\") | select(.body | contains(\"<!-- claude-qa -->\"))] | last | .id")
           [ -n "$COMMENT_ID" ] && [ "$COMMENT_ID" != "null" ] || exit 0
           gh api "repos/${REPO}/issues/comments/${COMMENT_ID}" --jq '.body' \
             | awk '/^<sub>⏱️/{exit} {print}' >"${RUNNER_TEMP}/qa.md"
@@ -657,8 +661,10 @@ jobs:
         run: |
           DURATION=$(( $(date +%s) - START ))
           BUDGET_LABEL="\$${BUDGET}"
+          # Same as the qa tier: only a claude[bot] comment this run posted.
+          SINCE=$(date -u -d "@${START}" '+%Y-%m-%dT%H:%M:%SZ')
           COMMENT_ID=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments?per_page=100" \
-            --jq '[.[] | select(.user.login == "github-actions[bot]") | select(.body | contains("<!-- claude-fix -->"))] | last | .id')
+            --jq "[.[] | select(.user.login == \"claude[bot]\") | select(.created_at >= \"${SINCE}\") | select(.body | contains(\"<!-- claude-fix -->\"))] | last | .id")
           [ -n "$COMMENT_ID" ] && [ "$COMMENT_ID" != "null" ] || exit 0
           gh api "repos/${REPO}/issues/comments/${COMMENT_ID}" --jq '.body' \
             | awk '/^<sub>⏱️/{exit} {print}' >"${RUNNER_TEMP}/fix.md"
