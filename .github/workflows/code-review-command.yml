@@ -12,6 +12,9 @@ name: code-review-command
 # What stays with the caller: the prompt files, since what a good answer looks
 # like is the repo's own business. They are read from the caller's default
 # branch, never from the PR under review — the model is told to follow them.
+# What a prompt then points the model at (AGENTS.md, a nested CLAUDE.md) is read
+# from the PR head: a PR can steer the guidance its own review reads, which only
+# matters for PRs from people who cannot push — forks, off in every caller today.
 #
 # `fix` is the one tier that WRITES. It needs `contents: write`, it pushes a
 # branch and opens a PR, and a caller may ask it to install dependencies first —
@@ -287,8 +290,10 @@ jobs:
     if: needs.detect.outputs.command == 'qa'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-    # One run per tier per PR, queued rather than cancelled: each was asked for.
-    # It lives here, not with the caller, because one calling job serves all tiers.
+    # One run per tier per PR, never cancelled mid-run: each was asked for. GitHub
+    # keeps one PENDING run per group, so a third request while one runs replaces
+    # the waiting second. It lives here, not with the caller, because one calling
+    # job serves all tiers.
     concurrency:
       group: code-review-qa-${{ needs.detect.outputs.pr_number }}
       cancel-in-progress: false
@@ -311,8 +316,8 @@ jobs:
       - name: Checkout the prompt from the default branch
         # The PR head is its author's to change — on a fork, anyone's — while this
         # run holds secrets and write scopes. The action restores only the CLI's own
-        # startup files (.claude/, CLAUDE.md, …) from the base, so the instructions
-        # the model is told to follow must come from a ref the PR cannot touch.
+        # startup files (.claude/, CLAUDE.md, …) from the base, so the prompt the
+        # model is told to follow comes from a ref the PR cannot touch.
         # After the PR checkout, which would otherwise clean this directory away.
         uses: actions/checkout@v7
         with:
@@ -426,7 +431,7 @@ jobs:
           fetch-depth: 0
 
       - name: Checkout the prompt from the default branch
-        # Same reasoning as the qa tier: never instructions the PR can rewrite.
+        # Same reasoning as the qa tier: never a prompt the PR can rewrite.
         uses: actions/checkout@v7
         with:
           ref: ${{ github.event.repository.default_branch }}
@@ -719,8 +724,9 @@ jobs:
           eval "$INSTALL_COMMAND"
 
       - name: Checkout the prompt from the default branch
-        # Same reasoning as the qa tier: never instructions the PR can rewrite. After
-        # the install, so no package script from the PR runs once it is in place.
+        # Same reasoning as the qa tier: never a prompt the PR can rewrite. After the
+        # install, so the install's own writes cannot replace it — though a process it
+        # leaves running still could, which is why forks are refused by default.
         uses: actions/checkout@v7
         with:
           ref: ${{ github.event.repository.default_branch }}
