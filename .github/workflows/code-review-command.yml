@@ -68,10 +68,13 @@ on:
         type: string
         default: '2.00'
       qa_allowed_tools:
-        description: 'The Q&A tier posts its own answer, so it needs `gh pr comment`.'
+        description: |
+          The Q&A tier writes its answer and this workflow posts it — never
+          `gh pr comment`, whose `--body-file` would post any file the model can read.
+          Reads inside the workspace need no rule; the one write allowed is the answer.
         required: false
         type: string
-        default: 'Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Read,Glob,Grep'
+        default: 'Bash(gh pr diff:*),Bash(gh pr view:*),Edit(/.claude-qa-answer.md)'
       deep_model:
         required: false
         type: string
@@ -304,7 +307,6 @@ jobs:
       contents: read
       pull-requests: write
       issues: write
-      id-token: write
       actions: read
     steps:
       - name: Checkout the PR head
@@ -357,59 +359,67 @@ jobs:
             printf '%s\n' "$REQUEST_BODY"
           } >.review-prompts/request.md
 
+      - name: Clear any answer the checkout brought in
+        # Only this run may write it — the post below trusts whatever is there.
+        run: rm -rf -- "${GITHUB_WORKSPACE}/.claude-qa-answer.md"
+
       - name: Record start time
         id: timer
         run: echo "start=$(date +%s)" >>"$GITHUB_OUTPUT"
 
       - name: Answer
+        id: answer
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.claude_code_oauth_token }}
+          # The model only reads and writes its answer; the workflow posts it. So the
+          # job's own token, not a Claude App one, which defaults to `contents: write`.
+          github_token: ${{ github.token }}
           show_full_output: true
-          # The model posts its own answer, so it keeps the Claude App token — but
-          # read-only on code. That token defaults to `contents: write`, and the
-          # model can read it (it is in the git remote and `GH_TOKEN`).
-          additional_permissions: |
-            actions: read
-            contents: read
           claude_args: |
             --model ${{ inputs.qa_model }} --max-turns ${{ inputs.qa_max_turns }} --max-budget-usd ${{ inputs.qa_max_budget_usd }} --allowedTools "${{ inputs.qa_allowed_tools }}"
           prompt: |
             REPO: ${{ github.repository }}
             PR_NUMBER: ${{ needs.detect.outputs.pr_number }}
+            ANSWER_FILE: ${{ github.workspace }}/.claude-qa-answer.md
 
             Read .review-prompts/${{ inputs.qa_prompt_file }} and follow it exactly.
             The triggering comment is in .review-prompts/request.md: its link, its file
             and line when it is an inline comment, then its text. Answer the question it
             asks after "@claude" — not any other @claude comment on the PR.
-            Post your answer as a PR comment beginning with the marker <!-- claude-qa -->.
+            Write your answer, as markdown, to ANSWER_FILE. This workflow posts it; do
+            not post it yourself.
 
-      - name: Stamp the answer with how it ran
-        continue-on-error: true
-        if: always()
+      - name: Post the answer
+        # The model never holds a posting tool: `gh pr comment --body-file` takes a
+        # path, so it could post any file the model can read. This step posts, as
+        # github-actions[bot], with the footer already on — nothing to look up later.
+        if: always() && (steps.answer.outcome == 'success' || steps.answer.outcome == 'failure')
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ needs.detect.outputs.pr_number }}
+          ANSWER_FILE: ${{ github.workspace }}/.claude-qa-answer.md
+          REQUEST_URL: ${{ github.event.comment.html_url || github.event.review.html_url }}
           MODEL: ${{ inputs.qa_model }}
           BUDGET: ${{ inputs.qa_max_budget_usd }}
           START: ${{ steps.timer.outputs.start }}
         run: |
+          if [ ! -s "$ANSWER_FILE" ]; then
+            echo "::error::The model wrote no answer."
+            exit 1
+          fi
           DURATION=$(( $(date +%s) - START ))
           BUDGET_LABEL="\$${BUDGET}"
-          # Only the answer this run posted. The model posts it through the action's
-          # app token, so it is authored by claude[bot] — never a human quote-reply —
-          # and a run that posted nothing must not re-stamp an earlier answer.
-          SINCE=$(date -u -d "@${START}" '+%Y-%m-%dT%H:%M:%SZ')
-          COMMENT_ID=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments?per_page=100" \
-            --jq "[.[] | select(.user.login == \"claude[bot]\") | select(.created_at >= \"${SINCE}\") | select(.body | contains(\"<!-- claude-qa -->\"))] | last | .id")
-          [ -n "$COMMENT_ID" ] && [ "$COMMENT_ID" != "null" ] || exit 0
-          gh api "repos/${REPO}/issues/comments/${COMMENT_ID}" --jq '.body' \
-            | awk '/^<sub>⏱️/{exit} {print}' >"${RUNNER_TEMP}/qa.md"
-          printf '\n---\n<sub>⏱️ %dm %ds · %s · budget-cap: %s</sub>\n' \
-            "$(( DURATION / 60 ))" "$(( DURATION % 60 ))" "$MODEL" "$BUDGET_LABEL" \
-            >>"${RUNNER_TEMP}/qa.md"
-          gh api "repos/${REPO}/issues/comments/${COMMENT_ID}" -X PATCH -F body=@"${RUNNER_TEMP}/qa.md"
+          {
+            echo '<!-- claude-qa -->'
+            echo "<sub>In reply to [this comment](${REQUEST_URL})</sub>"
+            echo
+            cat "$ANSWER_FILE"
+            printf '\n---\n<sub>⏱️ %dm %ds · %s · budget-cap: %s</sub>\n' \
+              "$(( DURATION / 60 ))" "$(( DURATION % 60 ))" "$MODEL" "$BUDGET_LABEL"
+          } >"${RUNNER_TEMP}/qa.md"
+          gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" -F body=@"${RUNNER_TEMP}/qa.md" >/dev/null
 
   deep:
     name: Deep Review
