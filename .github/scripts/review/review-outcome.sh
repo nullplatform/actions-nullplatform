@@ -3,8 +3,8 @@
 # Classify what happened to a review run, so the workflow can tell
 # "the model could not be reached" apart from "this pipeline is broken".
 #
-# The action exits 0 even when the API refused the request: the result record
-# carries `is_error` plus a rate_limit_event, and no review body is written.
+# The action exits 0 even when the API refused the request: the messages carry
+# a rejected rate_limit_event or an API error, and no review body is written.
 # Treating that as a red check trains people to ignore the check.
 #
 # Usage: review-outcome.sh <execution_file> <body_file> <review_step_outcome>
@@ -16,6 +16,9 @@
 #   skipped      the action deliberately self-skipped (its workflow-validation
 #                guard fires on any PR that edits this workflow). Not a failure.
 #   missing      no body and no recognised reason; fail loudly, as before.
+#   not_run      the review step itself never ran: an earlier step failed, or
+#                the run was cancelled or timed out. Nothing is posted — the
+#                job's own status already says what happened.
 set -euo pipefail
 
 exec_file="${1:-}"
@@ -27,6 +30,17 @@ emit() {
   printf 'reason=%s\n' "$2" >>"${GITHUB_OUTPUT:-/dev/stdout}"
   echo "review outcome: $1 — $2"
 }
+
+# Only a review step that ran can have answered. When it was skipped or
+# cancelled, a body on disk came from somewhere else — the checkout — and a
+# missing one says nothing about the action.
+case "$review_outcome" in
+  success | failure) ;;
+  *)
+    emit not_run "the review step did not run (${review_outcome:-no outcome})"
+    exit 0
+    ;;
+esac
 
 if [ -s "$body_file" ]; then
   emit ok "review body written"
@@ -45,19 +59,31 @@ if [ -z "$exec_file" ] || [ ! -s "$exec_file" ]; then
   exit 0
 fi
 
-# Prefer the API's own wording when it gave one — it usually names the limit
-# and when it resets, which is the only actionable part.
-msg=$(grep -oE '"text": *"[^"]*(limit|overloaded|capacity|quota)[^"]*"' "$exec_file" \
-  | head -1 | sed 's/^"text": *"//; s/"$//' | tr -d '\r') || true
+# The execution file is the SDK's message list as JSON, so read it as data. A
+# `rate_limit_event` alone means nothing — the CLI emits one on every
+# subscription run (status `allowed` / `allowed_warning`) — and a transient
+# `api_retry` names `rate_limit` too. Only a refusal counts: a rejected limit,
+# or a turn that ended on the API's own limit, overload or billing error.
+refusal=$(jq -r '
+  ([.[] | select(.type == "rate_limit_event" and .rate_limit_info.status == "rejected")] | last) as $limit
+  | ([.[] | select(.type == "assistant" and ((.error // "") | IN("rate_limit", "overloaded", "billing_error")))] | last) as $error
+  | if $limit != null then
+      "the \($limit.rate_limit_info.rateLimitType // "usage") limit was reached"
+      + (if $limit.rate_limit_info.resetsAt then "; it resets \($limit.rate_limit_info.resetsAt | todate)" else "" end)
+    elif $error != null then "the API answered `\($error.error)`"
+    else empty end
+' "$exec_file" 2>/dev/null) || refusal=""
 
-if grep -qE '"(type|error)": *"(rate_limit_event|rate_limit)"' "$exec_file"; then
-  emit unavailable "${msg:-the API rate limit or spend limit was reached}"
+if [ -n "$refusal" ]; then
+  emit unavailable "$refusal"
   exit 0
 fi
 
-if grep -qE 'overloaded_error|"status": *529' "$exec_file"; then
-  emit unavailable "${msg:-the API was overloaded}"
-  exit 0
-fi
-
-emit missing "execution output present but no review body was written"
+# How the run ended is the actionable part: `error_max_turns` or
+# `error_max_budget_usd` names the input to raise.
+ended=$(jq -r '[.[] | select(.type == "result")] | last | .subtype // empty' "$exec_file" 2>/dev/null) || ended=""
+case "$ended" in
+  '') emit missing "no review body was written" ;;
+  success) emit missing "no review body was written: the model finished without writing it" ;;
+  *) emit missing "no review body was written: the run ended with ${ended}" ;;
+esac

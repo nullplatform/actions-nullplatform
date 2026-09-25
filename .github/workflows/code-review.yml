@@ -39,10 +39,14 @@ on:
         type: string
         default: '1.00'
       allowed_tools:
-        description: 'Tools the reviewer may use. Read-only by default — this pass never writes to the repo.'
+        description: |
+          Tools the reviewer may use. Reads inside the workspace need no rule. The one
+          write allowed is the review body: a bare `Write` (or `Read`) approves EVERY
+          path, including the shared scripts the later steps run with the job token.
+          `Edit(...)` rules govern the Write tool; a leading `/` anchors at the workspace.
         required: false
         type: string
-        default: 'Bash(gh pr diff:*),Bash(gh pr view:*),Read,Glob,Grep,Write'
+        default: 'Bash(gh pr diff:*),Bash(gh pr view:*),Edit(/.claude-review-body.md)'
       allowed_bots:
         description: |
           Comma-separated bot actors whose pushes still get a review. Without this the
@@ -102,7 +106,6 @@ jobs:
       contents: read
       checks: write # the outcome is published as its own check run
       pull-requests: write
-      id-token: write
       actions: read
     outputs:
       status: ${{ steps.outcome.outputs.status }}
@@ -172,10 +175,12 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.claude_code_oauth_token }}
+          # The job's own token, not a Claude App one: this pass only reads, and the
+          # workflow does the posting. The App token defaults to `contents: write`,
+          # and the OIDC exchange that mints it can skip a run silently.
+          github_token: ${{ github.token }}
           allowed_bots: ${{ inputs.allowed_bots }}
           show_full_output: true
-          additional_permissions: |
-            actions: read
           claude_args: |
             --model ${{ inputs.model }} --max-turns ${{ inputs.max_turns }} --max-budget-usd ${{ inputs.max_budget_usd }} --allowedTools "${{ inputs.allowed_tools }}"
           prompt: |
@@ -213,6 +218,17 @@ jobs:
         run: |
           bash .review-scripts/.github/scripts/review/upsert-comment.sh "$MARKER" "$BODY_FILE"
 
+      - name: Clear a stale "did not run" note
+        # The review exists now, so an earlier run's note no longer holds.
+        if: always() && steps.post.outcome == 'success'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          bash .review-scripts/.github/scripts/review/delete-comments.sh '<!-- claude-review-unavailable -->'
+
       - name: Say so when the review could not run
         # A spend or rate limit is not a defect in this PR. Its own marker, so a real
         # review from an earlier run is left intact.
@@ -229,7 +245,7 @@ jobs:
             echo
             echo "**The automated review did not run.** $REASON"
             echo
-            echo 'Nothing is wrong with this PR. Re-run the job once the limit resets.'
+            echo "Nothing is wrong with this PR. Once the limit resets, re-run the PR's most recent run of this check."
           } >"${RUNNER_TEMP}/review-unavailable.md"
           bash .review-scripts/.github/scripts/review/upsert-comment.sh \
             '<!-- claude-review-unavailable -->' "${RUNNER_TEMP}/review-unavailable.md"
@@ -246,8 +262,9 @@ jobs:
 
       - name: Publish the outcome as a check
         # A job cannot report `neutral`, so publish a companion check that can.
-        # Best-effort: never red-X a job over its own status report.
-        if: always() && steps.outcome.outputs.status != ''
+        # Best-effort: never red-X a job over its own status report. Not for a
+        # review that never ran: the job's own failure or cancellation says it.
+        if: always() && steps.outcome.outputs.status != '' && steps.outcome.outputs.status != 'not_run'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
@@ -279,6 +296,7 @@ jobs:
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           MARKER: ${{ inputs.comment_marker }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           bash .review-scripts/.github/scripts/review/notify-author.sh \
             '<!-- claude-review-ping -->' "$MARKER" 'automated review'
@@ -286,12 +304,13 @@ jobs:
       - name: Detect an escalation request
         id: escalate
         # Reported as an output; what escalation MEANS is the caller's decision.
+        # Only a body this run wrote (`ok`) can ask for it.
         if: always()
         env:
-          GH_TOKEN: ${{ github.token }}
+          STATUS: ${{ steps.outcome.outputs.status }}
           BODY_FILE: ${{ github.workspace }}/.claude-review-body.md
         run: |
-          if [ -s "$BODY_FILE" ] && grep -q '<!-- escalate-deep' "$BODY_FILE"; then
+          if [ "$STATUS" = ok ] && grep -q '<!-- escalate-deep' "$BODY_FILE"; then
             echo 'escalate=true' >>"$GITHUB_OUTPUT"
           else
             echo 'escalate=false' >>"$GITHUB_OUTPUT"
@@ -299,8 +318,10 @@ jobs:
 
       - name: Stamp the review with how it ran
         # Only after a successful post: on a bare always() this would re-stamp a stale
-        # comment with a new SHA whenever the post was skipped or failed.
+        # comment with a new SHA whenever the post was skipped or failed. Best-effort,
+        # like the ping: a failed footer must not red-X a review that posted fine.
         if: always() && steps.post.outcome == 'success'
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
