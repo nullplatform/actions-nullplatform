@@ -158,6 +158,7 @@ jobs:
         # back, and only a fixed token ever leaves this step.
         env:
           EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action }}
           COMMENT_BODY: ${{ github.event.comment.body }}
           REVIEW_BODY: ${{ github.event.review.body }}
           COMMENT_ASSOC: ${{ github.event.comment.author_association }}
@@ -190,17 +191,24 @@ jobs:
               # `issue_comment` fires for issues too; only PRs carry this url.
               [ -n "$ISSUE_IS_PR" ] || { echo "Not a pull request — ignoring."; exit 0; }
               body="$COMMENT_BODY"; assoc="$COMMENT_ASSOC"
-              user_type="$COMMENT_USER_TYPE"; number="$ISSUE_NUMBER" ;;
+              user_type="$COMMENT_USER_TYPE"; number="$ISSUE_NUMBER"; new=created ;;
             pull_request_review_comment)
               body="$COMMENT_BODY"; assoc="$COMMENT_ASSOC"
-              user_type="$COMMENT_USER_TYPE"; number="$PR_NUMBER" ;;
+              user_type="$COMMENT_USER_TYPE"; number="$PR_NUMBER"; new=created ;;
             pull_request_review)
               body="$REVIEW_BODY"; assoc="$REVIEW_ASSOC"
-              user_type="$REVIEW_USER_TYPE"; number="$PR_NUMBER" ;;
+              user_type="$REVIEW_USER_TYPE"; number="$PR_NUMBER"; new=submitted ;;
             *)
               echo "::error::code-review-command was called on '$EVENT_NAME'. Call it on issue_comment, pull_request_review_comment or pull_request_review."
               exit 1 ;;
           esac
+
+          # Only a new request. An edit, a deletion or a dismissal carries the same
+          # body again — and deleting a `@claude fix` comment must not start a fix.
+          if [ "$EVENT_ACTION" != "$new" ]; then
+            echo "This ${EVENT_NAME} event is '${EVENT_ACTION}', not '${new}' — ignoring."
+            exit 0
+          fi
 
           # A bot repeating the trigger text must not start a run.
           if [ "$user_type" = "Bot" ]; then
@@ -213,7 +221,8 @@ jobs:
             ''|*[!0-9]*) echo "::error::Could not read a numeric PR number."; exit 1 ;;
           esac
 
-          case ",${ALLOWED}," in
+          # Spaces dropped, so 'OWNER, MEMBER' does not silently shut MEMBER out.
+          case ",${ALLOWED// /}," in
             *",${assoc},"*) ;;
             *)
               # Silent by design, matching how this behaves in the repos today.
@@ -223,11 +232,13 @@ jobs:
           esac
 
           # The qualified commands first: "@claude deep" also contains "@claude".
-          if printf '%s' "$body" | grep -qiE '(^|[[:space:]])@claude[[:space:]]+deep([[:space:]]|$)'; then
+          # Here-strings, not `printf | grep -q`: grep exits on the first match, and
+          # under pipefail the writer's SIGPIPE on a long comment reads as no match.
+          if grep -qiE '(^|[[:space:]])@claude[[:space:]]+deep([[:space:]]|$)' <<<"$body"; then
             command=deep
-          elif printf '%s' "$body" | grep -qiE '(^|[[:space:]])@claude[[:space:]]+fix([[:space:]]|$)'; then
+          elif grep -qiE '(^|[[:space:]])@claude[[:space:]]+fix([[:space:]]|$)' <<<"$body"; then
             command=fix
-          elif printf '%s' "$body" | grep -qiE '(^|[[:space:]])@claude([[:space:]]|$)'; then
+          elif grep -qiE '(^|[[:space:]])@claude([[:space:]]|$)' <<<"$body"; then
             # Unless it is a command another workflow answers (e.g. `@claude verify`):
             # that one is theirs, not a question for this one.
             IFS=',' read -r -a ignored <<<"${IGNORED// /}"
@@ -236,7 +247,7 @@ jobs:
                 '') continue ;;
                 *[!a-zA-Z0-9_-]*) echo "::error::ignored_commands takes plain words; got '${word}'."; exit 1 ;;
               esac
-              if printf '%s' "$body" | grep -qiE "(^|[[:space:]])@claude[[:space:]]+${word}([[:space:]]|\$)"; then
+              if grep -qiE "(^|[[:space:]])@claude[[:space:]]+${word}([[:space:]]|\$)" <<<"$body"; then
                 echo "@claude ${word} is handled by another workflow — ignoring."
                 exit 0
               fi
