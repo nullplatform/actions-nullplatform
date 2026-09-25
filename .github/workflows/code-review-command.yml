@@ -44,6 +44,14 @@ on:
         required: false
         type: string
         default: 'OWNER,MEMBER,COLLABORATOR'
+      ignored_commands:
+        description: |
+          Comma-separated `@claude <word>` commands another workflow of the caller's
+          handles (e.g. `verify`). Such a comment is left to it instead of also being
+          answered as a question. Plain words only.
+        required: false
+        type: string
+        default: ''
       qa_model:
         required: false
         type: string
@@ -160,6 +168,7 @@ jobs:
           ISSUE_IS_PR: ${{ github.event.issue.pull_request.url }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           ALLOWED: ${{ inputs.allowed_associations }}
+          IGNORED: ${{ inputs.ignored_commands }}
         run: |
           set -euo pipefail
 
@@ -219,6 +228,19 @@ jobs:
           elif printf '%s' "$body" | grep -qiE '(^|[[:space:]])@claude[[:space:]]+fix([[:space:]]|$)'; then
             command=fix
           elif printf '%s' "$body" | grep -qiE '(^|[[:space:]])@claude([[:space:]]|$)'; then
+            # Unless it is a command another workflow answers (e.g. `@claude verify`):
+            # that one is theirs, not a question for this one.
+            IFS=',' read -r -a ignored <<<"${IGNORED// /}"
+            for word in ${ignored[@]+"${ignored[@]}"}; do
+              case "$word" in
+                '') continue ;;
+                *[!a-zA-Z0-9_-]*) echo "::error::ignored_commands takes plain words; got '${word}'."; exit 1 ;;
+              esac
+              if printf '%s' "$body" | grep -qiE "(^|[[:space:]])@claude[[:space:]]+${word}([[:space:]]|\$)"; then
+                echo "@claude ${word} is handled by another workflow — ignoring."
+                exit 0
+              fi
+            done
             command=qa
           else
             echo "No @claude request in this comment."
