@@ -622,7 +622,7 @@ jobs:
             echo 'Nothing is wrong with this PR. Ask again once the limit resets.'
           } >"${RUNNER_TEMP}/unavailable.md"
           bash .review-scripts/.github/scripts/review/delete-comments.sh '<!-- claude-deep-review-unavailable -->'
-          gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" -F body=@"${RUNNER_TEMP}/unavailable.md" >/dev/null
+          bash .review-scripts/.github/scripts/review/post-comment.sh "${RUNNER_TEMP}/unavailable.md"
 
       - name: Fail when the review is missing for no known reason
         if: always() && steps.outcome.outputs.status == 'missing'

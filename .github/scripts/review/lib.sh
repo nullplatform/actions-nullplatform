@@ -15,6 +15,36 @@ gh_retry() {
   done
 }
 
+# True when a file holds something besides whitespace — a model that wrote only
+# blank lines has not answered.
+has_text() {
+  [ -s "$1" ] && grep -q '[^[:space:]]' "$1"
+}
+
+# Make a model-written body safe to post, in place. Fails (non-zero) when the
+# body carries this job's token, which the model can read — the action writes it
+# into `.git/config` — and which GitHub masks in logs but never in a comment.
+# Truncates what would not fit a comment (65536 characters), leaving room for the
+# footer; bytes >= characters, and `iconv -c` drops a character cut in half.
+make_postable() {
+  local file="$1" limit=64000 tmp
+  if [ -n "${GH_TOKEN:-}" ]; then
+    local basic
+    basic=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')
+    if grep -qF -e "$GH_TOKEN" -e "$basic" "$file"; then
+      echo "::error::The body contains this job's token; refusing to post it."
+      return 1
+    fi
+  fi
+  if [ "$(wc -c <"$file")" -gt "$limit" ]; then
+    tmp=$(mktemp)
+    head -c "$limit" "$file" | iconv -c -f UTF-8 -t UTF-8 >"$tmp" || true
+    printf '\n\n_(Truncated to fit a GitHub comment — the full text is in the run log.)_\n' >>"$tmp"
+    mv "$tmp" "$file"
+    echo "::warning::The body was over ${limit} bytes and was truncated."
+  fi
+}
+
 # jq filter selecting this workflow's own comments that carry a marker. Only the
 # bot's own comments count (a human quote-reply copies the marker too), and only
 # with the marker LEADING the comment: bodies are model-written, and one that

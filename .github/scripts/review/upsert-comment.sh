@@ -13,8 +13,11 @@ set -euo pipefail
 marker="$1"
 body_file="$2"
 
-if [ ! -s "$body_file" ]; then
-  echo "::error::No review body at '$body_file' (missing or empty); the review step likely failed to write it."
+# shellcheck source=.github/scripts/review/lib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+
+if ! has_text "$body_file"; then
+  echo "::error::No review body at '$body_file' (missing, empty or blank); the review step likely failed to write it."
   exit 1
 fi
 
@@ -24,8 +27,7 @@ if [ "$(head -n 1 "$body_file" | tr -d '\r')" != "$marker" ]; then
   printf '%s\n%s\n' "$marker" "$(cat "$body_file")" > "$body_file"
 fi
 
-# shellcheck source=.github/scripts/review/lib.sh
-source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+make_postable "$body_file"
 
 # Issue comments come back oldest-first, so the newest match is last.
 mapfile -t ids < <(gh_retry gh api "repos/${REPO}/issues/${PR_NUMBER}/comments?per_page=100" \

@@ -42,7 +42,8 @@ case "$review_outcome" in
     ;;
 esac
 
-if [ -s "$body_file" ]; then
+# Blank lines are not an answer.
+if [ -s "$body_file" ] && grep -q '[^[:space:]]' "$body_file"; then
   emit ok "review body written"
   exit 0
 fi
