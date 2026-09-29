@@ -362,6 +362,32 @@ jobs:
             printf '%s\n' "$REQUEST_BODY"
           } >.review-prompts/request.md
 
+      - name: Resolve the ref to take shared scripts from
+        id: scripts
+        # Same as the auto tier: the commit this workflow was loaded from.
+        env:
+          WORKFLOW_SHA: ${{ job.workflow_sha }}
+          OVERRIDE: ${{ inputs.scripts_ref }}
+        run: |
+          ref="${OVERRIDE:-$WORKFLOW_SHA}"
+          # An empty ref would check out the default branch, silently undoing the pin.
+          if [ -z "$ref" ]; then
+            echo "::error::Could not tell which commit this workflow runs from (job.workflow_sha is empty); refusing to take the shared scripts from the default branch."
+            exit 1
+          fi
+          echo "ref=$ref" >>"$GITHUB_OUTPUT"
+
+      - name: Checkout shared review scripts
+        uses: actions/checkout@v7
+        with:
+          repository: nullplatform/actions-nullplatform
+          ref: ${{ steps.scripts.outputs.ref }}
+          path: .review-scripts
+          persist-credentials: false # nothing after it needs git auth
+          sparse-checkout: |
+            .github/scripts/review
+          sparse-checkout-cone-mode: false
+
       - name: Clear any answer the checkout brought in
         # Only this run may write it — the post below trusts whatever is there.
         run: rm -rf -- "${GITHUB_WORKSPACE}/.claude-qa-answer.md"
@@ -372,6 +398,9 @@ jobs:
 
       - name: Answer
         id: answer
+        # Same reasoning as the deep tier: an answer that could not be produced is a
+        # missing answer, not a broken PR. The outcome steps below decide.
+        continue-on-error: true
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.claude_code_oauth_token }}
@@ -393,11 +422,22 @@ jobs:
             Write your answer, as markdown, to ANSWER_FILE. This workflow posts it; do
             not post it yourself.
 
+      - name: Classify the outcome
+        id: outcome
+        if: always()
+        env:
+          EXECUTION_FILE: ${{ steps.answer.outputs.execution_file }}
+          ANSWER_FILE: ${{ github.workspace }}/.claude-qa-answer.md
+          ANSWER_OUTCOME: ${{ steps.answer.outcome }}
+        run: |
+          bash .review-scripts/.github/scripts/review/review-outcome.sh \
+            "$EXECUTION_FILE" "$ANSWER_FILE" "$ANSWER_OUTCOME"
+
       - name: Post the answer
         # The model never holds a posting tool: `gh pr comment --body-file` takes a
         # path, so it could post any file the model can read. This step posts, as
         # github-actions[bot], with the footer already on — nothing to look up later.
-        if: always() && (steps.answer.outcome == 'success' || steps.answer.outcome == 'failure')
+        if: always() && steps.outcome.outputs.status == 'ok'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -408,10 +448,6 @@ jobs:
           BUDGET: ${{ inputs.qa_max_budget_usd }}
           START: ${{ steps.timer.outputs.start }}
         run: |
-          if [ ! -s "$ANSWER_FILE" ]; then
-            echo "::error::The model wrote no answer."
-            exit 1
-          fi
           DURATION=$(( $(date +%s) - START ))
           BUDGET_LABEL="\$${BUDGET}"
           {
@@ -422,7 +458,37 @@ jobs:
             printf '\n---\n<sub>⏱️ %dm %ds · %s · budget-cap: %s</sub>\n' \
               "$(( DURATION / 60 ))" "$(( DURATION % 60 ))" "$MODEL" "$BUDGET_LABEL"
           } >"${RUNNER_TEMP}/qa.md"
-          gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" -F body=@"${RUNNER_TEMP}/qa.md" >/dev/null
+          bash .review-scripts/.github/scripts/review/post-comment.sh "${RUNNER_TEMP}/qa.md"
+
+      - name: Say so when the question could not run
+        # Someone ASKED, so silence would read as the question being lost. A reply to
+        # that question, posted fresh so it notifies.
+        if: always() && steps.outcome.outputs.status == 'unavailable'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ needs.detect.outputs.pr_number }}
+          REQUEST_URL: ${{ github.event.comment.html_url || github.event.review.html_url }}
+          REASON: ${{ steps.outcome.outputs.reason }}
+        run: |
+          {
+            echo '<!-- claude-qa-unavailable -->'
+            echo "<sub>In reply to [this comment](${REQUEST_URL})</sub>"
+            echo
+            echo "**The question you asked did not run.** $REASON"
+            echo
+            echo 'Nothing is wrong with this PR. Ask again once the limit resets.'
+          } >"${RUNNER_TEMP}/unavailable.md"
+          bash .review-scripts/.github/scripts/review/post-comment.sh "${RUNNER_TEMP}/unavailable.md"
+
+      - name: Fail when the answer is missing for no known reason
+        if: always() && steps.outcome.outputs.status == 'missing'
+        env:
+          REASON: ${{ steps.outcome.outputs.reason }}
+        run: |
+          echo "::error::${REASON}"
+          exit 1
 
   deep:
     name: Deep Review
