@@ -435,6 +435,7 @@ jobs:
       cancel-in-progress: false
     permissions:
       contents: read
+      checks: read # ci-status.sh reads the PR's check runs; without it CI_STATUS is always empty
       pull-requests: write
       issues: write
       actions: read
@@ -503,6 +504,7 @@ jobs:
           repository: nullplatform/actions-nullplatform
           ref: ${{ steps.scripts.outputs.ref }}
           path: .review-scripts
+          persist-credentials: false # nothing after it needs git auth
           sparse-checkout: |
             .github/scripts/review
           sparse-checkout-cone-mode: false

@@ -142,6 +142,7 @@ jobs:
           repository: nullplatform/actions-nullplatform
           ref: ${{ steps.scripts.outputs.ref }}
           path: .review-scripts
+          persist-credentials: false # nothing after it needs git auth
           sparse-checkout: |
             .github/scripts/review
           sparse-checkout-cone-mode: false
