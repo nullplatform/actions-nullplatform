@@ -14,3 +14,12 @@ gh_retry() {
     attempt=$((attempt + 1)); delay=$((delay * 2))
   done
 }
+
+# jq filter selecting this workflow's own comments that carry a marker. Only the
+# bot's own comments count (a human quote-reply copies the marker too), and only
+# with the marker LEADING the comment: bodies are model-written, and one that
+# quotes another comment's marker mid-body must never be taken for that comment.
+# Usage: gh api "…/comments" --jq "$(own_comments_jq '<!-- marker -->') | .id"
+own_comments_jq() {
+  printf '.[] | select(.user.login == "github-actions[bot]") | select(.body | split("\\n")[0] | startswith("%s"))' "$1"
+}

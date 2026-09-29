@@ -18,19 +18,18 @@ if [ ! -s "$body_file" ]; then
   exit 1
 fi
 
-# Safety net: guarantee the marker is in the body so future runs can find it.
-if ! grep -qF "$marker" "$body_file"; then
+# Safety net: the marker must LEAD the body, since lookups match it only there —
+# a marker the model wrote further down (or mid-line) would not be found next time.
+if [ "$(head -n 1 "$body_file" | tr -d '\r')" != "$marker" ]; then
   printf '%s\n%s\n' "$marker" "$(cat "$body_file")" > "$body_file"
 fi
 
 # shellcheck source=.github/scripts/review/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-# Only the bot's own comments count: a human quote-reply copies the raw
-# markdown — marker included — and must never be edited or pruned here.
 # Issue comments come back oldest-first, so the newest match is last.
 mapfile -t ids < <(gh_retry gh api "repos/${REPO}/issues/${PR_NUMBER}/comments?per_page=100" \
-  --jq ".[] | select(.user.login == \"github-actions[bot]\") | select(.body | contains(\"${marker}\")) | .id")
+  --jq "$(own_comments_jq "$marker") | .id")
 
 if [ "${#ids[@]}" -eq 0 ]; then
   # Create via REST (not `gh pr comment`, which goes through GraphQL and is

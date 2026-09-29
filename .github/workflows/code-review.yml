@@ -341,8 +341,10 @@ jobs:
           # Assembled here rather than written as `$%s` in the format string, which
           # would be a literal `$` inside single quotes (shellcheck SC2016).
           BUDGET_LABEL="\$${BUDGET}"
+          # shellcheck source=/dev/null
+          source .review-scripts/.github/scripts/review/lib.sh
           COMMENT_ID=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments?per_page=100" \
-            --jq "[.[] | select(.user.login == \"github-actions[bot]\") | select(.body | contains(\"${MARKER}\"))] | last | .id")
+            --jq "[$(own_comments_jq "$MARKER")] | last | .id")
           if [ -n "$COMMENT_ID" ] && [ "$COMMENT_ID" != "null" ]; then
             # Drop any previous footer, so a re-run replaces it rather than stacking.
             gh api "repos/${REPO}/issues/comments/${COMMENT_ID}" --jq '.body' \

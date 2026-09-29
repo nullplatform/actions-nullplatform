@@ -12,9 +12,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 marker="$1"
 
-# Only the bot's own comments: a human quote-reply carries the marker too.
 mapfile -t ids < <(gh_retry gh api "repos/${REPO}/issues/${PR_NUMBER}/comments?per_page=100" \
-  --jq ".[] | select(.user.login == \"github-actions[bot]\") | select(.body | contains(\"${marker}\")) | .id")
+  --jq "$(own_comments_jq "$marker") | .id")
 
 for id in "${ids[@]}"; do
   if gh api "repos/${REPO}/issues/comments/${id}" -X DELETE >/dev/null 2>&1; then

@@ -20,10 +20,9 @@ ping_marker="$1"
 review_marker="$2"
 label="$3"
 
-# Only ping if a review comment actually exists (links the ping to it). Match
-# only the bot's own comments — a human quote-reply carries the marker too.
+# Only ping if a review comment actually exists (links the ping to it).
 review_url=$(gh_retry gh api "repos/${REPO}/issues/${PR_NUMBER}/comments?per_page=100" \
-  --jq "[.[] | select(.user.login == \"github-actions[bot]\") | select(.body | contains(\"${review_marker}\"))] | last | .html_url")
+  --jq "[$(own_comments_jq "$review_marker")] | last | .html_url")
 if [ -z "$review_url" ] || [ "$review_url" = "null" ]; then
   echo "No review comment with marker ${review_marker}; skipping ping."
   exit 0
@@ -40,10 +39,10 @@ if [ "$is_bot" = "true" ]; then
   exit 0
 fi
 
-# Delete any prior ping so only the newest remains (bot-authored only — never
-# touch a human comment that happens to quote the marker).
+# Delete any prior ping so only the newest remains — never a comment that merely
+# quotes the ping marker, human or a review that cites it.
 mapfile -t old < <(gh_retry gh api "repos/${REPO}/issues/${PR_NUMBER}/comments?per_page=100" \
-  --jq ".[] | select(.user.login == \"github-actions[bot]\") | select(.body | contains(\"${ping_marker}\")) | .id")
+  --jq "$(own_comments_jq "$ping_marker") | .id")
 for id in "${old[@]}"; do
   if gh api "repos/${REPO}/issues/comments/${id}" -X DELETE >/dev/null 2>&1; then
     echo "Removed previous ping ${id}."

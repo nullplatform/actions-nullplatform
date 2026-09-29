@@ -646,8 +646,10 @@ jobs:
         run: |
           DURATION=$(( $(date +%s) - START ))
           BUDGET_LABEL="\$${BUDGET}"
+          # shellcheck source=/dev/null
+          source .review-scripts/.github/scripts/review/lib.sh
           COMMENT_ID=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments?per_page=100" \
-            --jq '[.[] | select(.user.login == "github-actions[bot]") | select(.body | contains("<!-- claude-deep-review -->"))] | last | .id')
+            --jq "[$(own_comments_jq '<!-- claude-deep-review -->')] | last | .id")
           [ -n "$COMMENT_ID" ] && [ "$COMMENT_ID" != "null" ] || exit 0
           gh api "repos/${REPO}/issues/comments/${COMMENT_ID}" --jq '.body' \
             | awk '/^<sub>⏱️/{exit} {print}' >"${RUNNER_TEMP}/deep.md"
@@ -834,7 +836,7 @@ jobs:
           # quote-reply — and a run that posted nothing must not re-stamp an older one.
           SINCE=$(date -u -d "@${START}" '+%Y-%m-%dT%H:%M:%SZ')
           COMMENT_ID=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments?per_page=100" \
-            --jq "[.[] | select(.user.login == \"claude[bot]\") | select(.created_at >= \"${SINCE}\") | select(.body | contains(\"<!-- claude-fix -->\"))] | last | .id")
+            --jq "[.[] | select(.user.login == \"claude[bot]\") | select(.created_at >= \"${SINCE}\") | select(.body | split(\"\n\")[0] | startswith(\"<!-- claude-fix -->\"))] | last | .id")
           [ -n "$COMMENT_ID" ] && [ "$COMMENT_ID" != "null" ] || exit 0
           gh api "repos/${REPO}/issues/comments/${COMMENT_ID}" --jq '.body' \
             | awk '/^<sub>⏱️/{exit} {print}' >"${RUNNER_TEMP}/fix.md"
