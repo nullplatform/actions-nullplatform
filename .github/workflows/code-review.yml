@@ -24,10 +24,13 @@ on:
         required: true
         type: string
       model:
-        description: 'Model for the review pass.'
+        description: |
+          Model for the review pass, as a full model ID. Pinned rather than the `sonnet`
+          alias, which moves to the next Sonnet whenever the action installs a newer
+          Claude Code — a model change should be a deliberate edit here.
         required: false
         type: string
-        default: 'sonnet'
+        default: 'claude-sonnet-5-5'
       max_turns:
         description: 'Turn budget. Exhausting it may still leave a partial review, which is posted.'
         required: false

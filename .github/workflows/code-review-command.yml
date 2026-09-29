@@ -56,9 +56,10 @@ on:
         type: string
         default: ''
       qa_model:
+        description: 'Full model ID, pinned like the auto tier''s `model`: an alias would move underneath the pin.'
         required: false
         type: string
-        default: 'sonnet'
+        default: 'claude-sonnet-5-5'
       qa_max_turns:
         required: false
         type: number
@@ -76,9 +77,10 @@ on:
         type: string
         default: 'Bash(gh pr diff:*),Bash(gh pr view:*),Edit(/.claude-qa-answer.md)'
       deep_model:
+        description: 'Full model ID, pinned like the auto tier''s `model`: an alias would move underneath the pin.'
         required: false
         type: string
-        default: 'opus'
+        default: 'claude-opus-5-5'
       deep_max_turns:
         required: false
         type: number
@@ -96,9 +98,10 @@ on:
         type: string
         default: 'Bash(gh pr diff:*),Bash(gh pr view:*),Edit(/.claude-deep-review-body.md)'
       fix_model:
+        description: 'Full model ID, pinned like the auto tier''s `model`: an alias would move underneath the pin.'
         required: false
         type: string
-        default: 'opus'
+        default: 'claude-opus-5-5'
       fix_max_turns:
         required: false
         type: number
