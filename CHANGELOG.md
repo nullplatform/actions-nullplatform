@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.7.1](https://github.com/nullplatform/actions-nullplatform/compare/v1.7.0...v1.7.1) (2026-09-30)
+
+
+### Bug Fixes
+
+* **auto-merge-release:** merge only the head whose checks were verified ([7643195](https://github.com/nullplatform/actions-nullplatform/commit/764319514ae2bbf2c314955b379448c90970a99c))
+* **auto-merge-release:** merge only the head whose checks were verified ([664fdde](https://github.com/nullplatform/actions-nullplatform/commit/664fddeb209f27855ea356b2a6cd798d5e658560))
+* **auto-merge-release:** retry the merge on transient GitHub errors ([e2a396e](https://github.com/nullplatform/actions-nullplatform/commit/e2a396e61c702848844dad510f5009e2bed7271a))
+* **auto-merge-release:** retry the merge on transient GitHub errors ([e44c58b](https://github.com/nullplatform/actions-nullplatform/commit/e44c58bd7d5d1133fea3c6f0434bd13eb60731b3))
+* **deps:** bump renovatebot/github-action from 46.3.1 to 46.3.4 in the github-actions group ([2bdae92](https://github.com/nullplatform/actions-nullplatform/commit/2bdae9214254601e9770a5f537a8809c8294f476))
+
 ## [1.7.0](https://github.com/nullplatform/actions-nullplatform/compare/v1.6.3...v1.7.0) (2026-09-30)
 
 
