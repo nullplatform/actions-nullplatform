@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.0](https://github.com/nullplatform/actions-nullplatform/compare/v1.6.3...v1.7.0) (2026-09-30)
+
+
+### Features
+
+* add reusable code-review workflows for the auto review and the [@claude](https://github.com/claude) tiers ([#132](https://github.com/nullplatform/actions-nullplatform/issues/132)) ([ba1a0a9](https://github.com/nullplatform/actions-nullplatform/commit/ba1a0a998a84dbb7171b6049244f00baf6866601))
+
 ## [1.6.3](https://github.com/nullplatform/actions-nullplatform/compare/v1.6.2...v1.6.3) (2026-09-22)
 
 
