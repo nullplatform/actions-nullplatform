@@ -100,6 +100,7 @@ jobs:
           private-key: ${{ secrets.app-private-key }}
 
       - name: Wait for other checks to pass
+        id: wait
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           PR_NUMBER: ${{ needs.resolve.outputs.pr_number }}
@@ -133,6 +134,12 @@ jobs:
           done_waiting=false
           err_file="${RUNNER_TEMP:-/tmp}/gh_pr_checks_err"
           for i in $(seq 1 90); do
+            # The head the checks below belong to; the merge is pinned to it.
+            if ! head="$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json headRefOid --jq .headRefOid 2>/dev/null)" || [ -z "$head" ]; then
+              echo "::warning::could not read the head of PR #$PR_NUMBER (overall $i/90), retrying"
+              sleep 15
+              continue
+            fi
             if ! checks="$(gh pr checks "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json name,state,link 2>"$err_file")"; then
               err="$(cat "$err_file" 2>/dev/null || true)"
               if printf '%s' "$err" | grep -qi 'no checks reported'; then
@@ -140,6 +147,7 @@ jobs:
                   no_checks_grace=$((no_checks_grace + 1))
                   if [ "$no_checks_grace" -ge 10 ]; then
                     echo "::warning::No checks registered on PR #$PR_NUMBER after $no_checks_grace attempts — merging without check verification."
+                    echo "head_sha=$head" >> "$GITHUB_OUTPUT"
                     done_waiting=true
                     break
                   fi
@@ -167,7 +175,15 @@ jobs:
 
             pending="$(echo "$others" | jq 'map(select(.state=="PENDING" or .state=="QUEUED" or .state=="IN_PROGRESS")) | length')"
             if [ "$pending" -eq 0 ]; then
-              echo "All other checks passed."
+              # Green checks for a head that moved meanwhile say nothing about the new one.
+              now="$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json headRefOid --jq .headRefOid 2>/dev/null || true)"
+              if [ "$now" != "$head" ]; then
+                echo "PR #$PR_NUMBER head moved from ${head:0:7} to ${now:0:7} (overall $i/90), waiting for its checks..."
+                sleep 15
+                continue
+              fi
+              echo "All other checks passed on ${head:0:7}."
+              echo "head_sha=$head" >> "$GITHUB_OUTPUT"
               done_waiting=true
               break
             fi
@@ -186,6 +202,7 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           PR_NUMBER: ${{ needs.resolve.outputs.pr_number }}
           MERGE_METHOD: ${{ inputs.merge_method }}
+          HEAD_SHA: ${{ steps.wait.outputs.head_sha }}
         # --admin: the App token still hits "base branch policy prohibits the
         # merge" (required review/status-check rules) without it, even though
         # checks were confirmed green above — the App isn't actually treated
@@ -196,15 +213,24 @@ jobs:
         #
         # Retried: this workflow only runs again on the next release, so a transient
         # GitHub error here would leave the release PR open until someone pushes to main.
+        #
+        # --match-head-commit: never merge a head other than the one whose checks were verified;
+        # if release-please moved it meanwhile, the next release run merges the new head.
         run: |
           for attempt in 1 2 3; do
-            if gh pr merge "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --"$MERGE_METHOD" --admin; then
+            if gh pr merge "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --"$MERGE_METHOD" --admin --match-head-commit "$HEAD_SHA"; then
               exit 0
             fi
             # The error can come after GitHub already merged it.
             if [ "$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json state --jq .state)" = "MERGED" ]; then
               echo "PR #$PR_NUMBER is merged."
               exit 0
+            fi
+            # An empty read is a transient error, not a moved head: retry it.
+            now="$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json headRefOid --jq .headRefOid 2>/dev/null || true)"
+            if [ -n "$now" ] && [ "$now" != "$HEAD_SHA" ]; then
+              echo "::error::PR #$PR_NUMBER head moved after its checks were verified; the next release run merges it"
+              exit 1
             fi
             if [ "$attempt" -lt 3 ]; then
               echo "::warning::merge of PR #$PR_NUMBER failed (attempt $attempt/3), retrying in $((attempt * 30))s"
