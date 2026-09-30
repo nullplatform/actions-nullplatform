@@ -193,4 +193,23 @@ jobs:
         # if the App's installation grants it Administration permission on
         # the repo; if it doesn't, this will fail with a clearer permission
         # error instead of the generic "policy prohibits" one.
-        run: gh pr merge "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --"$MERGE_METHOD" --admin
+        #
+        # Retried: this workflow only runs again on the next release, so a transient
+        # GitHub error here would leave the release PR open until someone pushes to main.
+        run: |
+          for attempt in 1 2 3; do
+            if gh pr merge "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --"$MERGE_METHOD" --admin; then
+              exit 0
+            fi
+            # The error can come after GitHub already merged it.
+            if [ "$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json state --jq .state)" = "MERGED" ]; then
+              echo "PR #$PR_NUMBER is merged."
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              echo "::warning::merge of PR #$PR_NUMBER failed (attempt $attempt/3), retrying in $((attempt * 30))s"
+              sleep $((attempt * 30))
+            fi
+          done
+          echo "::error::could not merge PR #$PR_NUMBER after 3 attempts"
+          exit 1
