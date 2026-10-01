@@ -104,14 +104,15 @@ module.exports = {
     arg('HELM', 'helm/helm'),
     arg('KUBECTL', 'kubernetes/kubernetes'),
     arg('FLUENT_BIT', 'fluent/fluent-bit'),
-    // k8s-tools pins its bases by branch, which Dependabot cannot follow: the Alpine branch
-    // is an ARG feeding two FROMs (alpine and node:<major>-alpine<branch>), and nginx is a
-    // line tag. Only the branch moves here; patches inside it land when the image is rebuilt.
+    // k8s-tools keeps both images on one Alpine branch: an ARG ALPINE_VERSION in each Dockerfile
+    // (alpine:<branch>, nginx:<line>-alpine<branch>), which Dependabot cannot follow. The ARG and
+    // the nginx line move here, grouped so both images change branch in the same PR. Patches inside
+    // a branch land when the image is rebuilt.
     { customType: 'regex', managerFilePatterns: DOCKERFILES,
       matchStrings: ['ARG ALPINE_VERSION=(?<currentValue>[0-9]+\\.[0-9]+)\\s'],
       depNameTemplate: 'alpine', datasourceTemplate: 'docker', versioningTemplate: 'docker' },
     { customType: 'regex', managerFilePatterns: DOCKERFILES,
-      matchStrings: ['FROM nginx:(?<currentValue>[0-9]+\\.[0-9]+)-alpine\\s'],
+      matchStrings: ['FROM nginx:(?<currentValue>[0-9]+\\.[0-9]+)-alpine'],
       depNameTemplate: 'nginx', datasourceTemplate: 'docker', versioningTemplate: 'docker' },
     {
       // A version written straight into the download URL, with no ARG. Five of
@@ -136,7 +137,7 @@ module.exports = {
     // Dockerfile, and three PRs against one file would conflict with each other.
     { matchManagers: ['custom.regex'], groupName: 'pinned binaries' },
 
-    // A base branch bump can break the build (node must publish the matching alpine tag),
+    // A base branch bump can break the build (nginx must publish the matching alpine tag),
     // so it gets its own PR instead of riding along with the pinned binaries.
     { matchDatasources: ['docker'], matchDepNames: ['alpine', 'nginx'], groupName: 'base images' },
     // Only k8s-tools is meant to match; anywhere else a FROM belongs to its owner.
