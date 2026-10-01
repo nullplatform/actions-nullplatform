@@ -49,7 +49,7 @@ module.exports = {
 
   // Only the managers below. No npm, no go.mod, no docker FROM: those layers are
   // owned elsewhere (Dependabot / the base-image work), and this must never open
-  // a PR nobody asked for.
+  // a PR nobody asked for. The k8s-tools base branches are the exception, via custom.regex below.
   // No dockerfile manager: the FROM line belongs to the base-image owner, who bumps it with Dependabot
   // (package-ecosystem: docker, label base-image). Two bots on one line means two PRs for one change.
   // No github-actions manager and no manager that writes under .github/workflows: that would
@@ -104,6 +104,15 @@ module.exports = {
     arg('HELM', 'helm/helm'),
     arg('KUBECTL', 'kubernetes/kubernetes'),
     arg('FLUENT_BIT', 'fluent/fluent-bit'),
+    // k8s-tools pins its bases by branch, which Dependabot cannot follow: the Alpine branch
+    // is an ARG feeding two FROMs (alpine and node:<major>-alpine<branch>), and nginx is a
+    // line tag. Only the branch moves here; patches inside it land when the image is rebuilt.
+    { customType: 'regex', managerFilePatterns: DOCKERFILES,
+      matchStrings: ['ARG ALPINE_VERSION=(?<currentValue>[0-9]+\\.[0-9]+)\\s'],
+      depNameTemplate: 'alpine', datasourceTemplate: 'docker', versioningTemplate: 'docker' },
+    { customType: 'regex', managerFilePatterns: DOCKERFILES,
+      matchStrings: ['FROM nginx:(?<currentValue>[0-9]+\\.[0-9]+)-alpine\\s'],
+      depNameTemplate: 'nginx', datasourceTemplate: 'docker', versioningTemplate: 'docker' },
     {
       // A version written straight into the download URL, with no ARG. Five of
       // these exist today (performance-prometheus, traffic-kong-gateway-base-image)
@@ -126,6 +135,14 @@ module.exports = {
     // One PR per repo with every pin in it: scopes declares three in the same
     // Dockerfile, and three PRs against one file would conflict with each other.
     { matchManagers: ['custom.regex'], groupName: 'pinned binaries' },
+
+    // A base branch bump can break the build (node must publish the matching alpine tag),
+    // so it gets its own PR instead of riding along with the pinned binaries.
+    { matchDatasources: ['docker'], matchDepNames: ['alpine', 'nginx'], groupName: 'base images' },
+    // Only k8s-tools is meant to match; anywhere else a FROM belongs to its owner.
+    { matchDatasources: ['docker'], matchDepNames: ['alpine', 'nginx'], matchRepositories: ['!nullplatform/k8s-tools'], enabled: false },
+    // nginx odd minors are mainline; stay on stable lines (1.30, 1.32, ...).
+    { matchDepNames: ['nginx'], allowedVersions: '/^[0-9]+\\.[0-9]*[02468]$/' },
 
     // Majors are never proposed automatically, for anything. A major is a
     // compatibility decision, not a dependency bump.
