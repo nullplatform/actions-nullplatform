@@ -16,6 +16,15 @@ on:
         required: false
         type: boolean
         default: true
+    # Optional. Without them the release PR is opened by github-actions[bot], and GitHub holds
+    # pull_request runs of that author for manual approval: the PR checks never run.
+    secrets:
+      app-id:
+        description: 'GitHub App ID that opens the release PR (needs contents, pull_requests and issues write)'
+        required: false
+      app-private-key:
+        description: 'Private key of that GitHub App'
+        required: false
     # Exposed so callers can chain publish/register jobs in the SAME workflow
     # run. Chaining here is the standard: release-please creates tags with
     # GITHUB_TOKEN, and GitHub never triggers workflows from bot-token events,
@@ -45,11 +54,26 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
+      - name: Check for a release App
+        id: app
+        env:
+          APP_ID: ${{ secrets.app-id }}
+        run: echo "enabled=$([ -n "$APP_ID" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+      - name: Generate GitHub App token
+        id: app-token
+        if: ${{ steps.app.outputs.enabled == 'true' }}
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.app-id }}
+          private-key: ${{ secrets.app-private-key }}
+
       - name: Release
         id: release
         uses: googleapis/release-please-action@v5
         with:
           release-type: ${{ inputs.release-type }}
+          token: ${{ steps.app-token.outputs.token || github.token }}
 
   update-readme-versions:
     name: Update README Versions

@@ -50,6 +50,8 @@ name: release-publish-oci
 #       secrets:
 #         aws_role_arn: ${{ secrets.AWS_ROLE_ARN_ECR_PUSH }}
 #         artifact_np_api_key: ${{ secrets.ARTIFACT_NP_API_KEY }}
+#         app-id: ${{ secrets.APP_RELEASE_ID }}
+#         app-private-key: ${{ secrets.APP_RELEASE_PRIVATE_KEY }}
 #
 # Artifact registration additionally reads the NP_ARTIFACT_NRN repository (or
 # organization) variable — the owner NRN for the registered artifact.
@@ -140,6 +142,12 @@ on:
       artifact_np_api_key:
         description: 'nullplatform API key for artifact registration (required while register_artifact is true)'
         required: false
+      app-id:
+        description: 'GitHub App ID that opens the release PR (see release.yml)'
+        required: false
+      app-private-key:
+        description: 'Private key of that GitHub App'
+        required: false
     outputs:
       release_created:
         description: 'true when a release was cut on this run'
@@ -181,6 +189,9 @@ jobs:
     with:
       release-type: ${{ inputs.release-type }}
       update_readme_versions: ${{ inputs.update_readme_versions }}
+    secrets:
+      app-id: ${{ secrets.app-id }}
+      app-private-key: ${{ secrets.app-private-key }}
 
   publish:
     needs: [preflight, release]

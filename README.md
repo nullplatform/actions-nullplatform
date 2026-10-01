@@ -446,6 +446,7 @@ The standard release pipeline for service repos that ship an OCI image. Chains r
 **Secrets**
 - `aws_role_arn` (required): AWS IAM Role ARN for OIDC auth against ECR
 - `artifact_np_api_key`: nullplatform API key (required while `register_artifact` is true)
+- `app-id` / `app-private-key`: GitHub App that opens the release PR. Without them the PR is opened by `github-actions[bot]` and its checks are held for approval
 
 Also reads the `NP_ARTIFACT_NRN` repository/organization variable (artifact owner NRN), and requires the caller to grant `contents: write`, `pull-requests: write`, and `id-token: write` (a preflight job fails fast when `id-token` is missing).
 
