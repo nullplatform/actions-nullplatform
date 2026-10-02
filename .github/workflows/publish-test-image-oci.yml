@@ -189,6 +189,7 @@ jobs:
 
       - name: Verify permissions and artifact wiring
         env:
+          ROLE_ARN: ${{ secrets.aws_role_arn }}
           REGISTER: ${{ inputs.register_artifact }}
           NP_API_KEY: ${{ secrets.artifact_np_api_key }}
           ARTIFACT_NRN: ${{ vars.NP_ARTIFACT_NRN }}
@@ -197,6 +198,12 @@ jobs:
           # exposes the token-exchange endpoint when id-token is granted.
           if [ -z "$ACTIONS_ID_TOKEN_REQUEST_URL" ]; then
             echo "::error::the calling workflow must grant 'id-token: write' (required for the ECR push). Add it to the caller's permissions block."
+            exit 1
+          fi
+          # Callers take the role from a variable or secret; an unset one reaches here as an
+          # empty string and would only fail later, inside configure-aws-credentials.
+          if [ -z "$ROLE_ARN" ]; then
+            echo "::error::the aws_role_arn secret is empty: the variable or secret the caller passes is not set in this repository or organization"
             exit 1
           fi
           if [ "$REGISTER" != "true" ]; then
