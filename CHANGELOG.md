@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.7.2](https://github.com/nullplatform/actions-nullplatform/compare/v1.7.1...v1.7.2) (2026-10-02)
+
+
+### Bug Fixes
+
+* **docker-build-push-ecr:** one build cache per image ([046b226](https://github.com/nullplatform/actions-nullplatform/commit/046b22618afcb407395ed3aa60698254cb532825))
+* **docker-build-push-ecr:** one build cache per image ([44633e6](https://github.com/nullplatform/actions-nullplatform/commit/44633e601222c7d1e688a6df8fbca0597c0ec5df))
+* **publish-test-image-oci:** fail preflight when the role secret is empty ([a078978](https://github.com/nullplatform/actions-nullplatform/commit/a0789788bf213bc71ac651edd886397480cb6c11))
+* **publish-test-image-oci:** fail preflight when the role secret is empty ([ddaa6f4](https://github.com/nullplatform/actions-nullplatform/commit/ddaa6f443652f4fa8618428d08bac50c1ed0bbda))
+
 ## [1.7.1](https://github.com/nullplatform/actions-nullplatform/compare/v1.7.0...v1.7.1) (2026-09-30)
 
 
