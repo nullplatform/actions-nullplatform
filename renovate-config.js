@@ -66,14 +66,17 @@ module.exports = {
 
   // The App deliberately has no "vulnerability alerts" permission, and this run does
   // not use Dependabot alerts to decide anything. Without this Renovate warns on every repo.
-  vulnerabilityAlerts: { enabled: false },
+  // OSV-based fix PRs get these settings forced onto them (Renovate merges vulnerabilityAlerts
+  // into the rule it builds for each advisory), so only real vulnerability fixes carry "security":
+  // that label is what Vanta tracks as a remediation task.
+  vulnerabilityAlerts: { enabled: false, labels: ['dependencies', 'security'] },
   // OSV knows the CVEs of gomod/npm deps: those updates are raised immediately and labelled as security.
   osvVulnerabilityAlerts: true,
 
   automerge: false,
   prConcurrentLimit: 10,
   prHourlyLimit: 0,
-  labels: ['dependencies', 'security'],
+  labels: ['dependencies'],
   // The org's branch-validation check only accepts conventional-commit prefixes
   // (feat|fix|chore|...). A "renovate/" branch fails it before anyone reads the PR.
   // branchPrefixOld lets Renovate migrate the branch it already opened under the
@@ -104,18 +107,14 @@ module.exports = {
     arg('HELM', 'helm/helm'),
     arg('KUBECTL', 'kubernetes/kubernetes'),
     arg('FLUENT_BIT', 'fluent/fluent-bit'),
-    {
-      // A version written straight into the download URL, with no ARG. Five of
-      // these exist today (performance-prometheus, traffic-kong-gateway-base-image)
-      // and the ARG-only approach could not see them.
-      customType: 'regex',
-      managerFilePatterns: DOCKERFILES,
-      matchStrings: [
-        'https://github\\.com/(?<depName>[^/\\s]+/[^/\\s]+)/releases/download/v?(?<currentValue>[0-9][0-9.]*)/',
-      ],
-      datasourceTemplate: 'github-releases',
-      extractVersionTemplate: '^v?(?<version>.*)$',
-    },
+    // Binaries downloaded from GitHub releases pin their version in an ARG used in both the
+    // release directory and the asset name. A matcher on the bare URL only rewrote the
+    // directory and left the old asset name, which 404'd (traffic-kong-gateway-base-image#2,
+    // performance-prometheus#6); both Dockerfiles now use these ARGs.
+    arg('DECK', 'kong/deck'),
+    arg('PROMETHEUS', 'prometheus/prometheus'),
+    arg('YACE', 'nerdswords/yet-another-cloudwatch-exporter'),
+    arg('TIMESTREAM_ADAPTER', 'dpattmann/prometheus-timestream-adapter'),
   ],
 
   packageRules: [
