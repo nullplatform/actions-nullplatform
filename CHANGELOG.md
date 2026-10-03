@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.3](https://github.com/nullplatform/actions-nullplatform/compare/v1.7.2...v1.7.3) (2026-10-03)
+
+
+### Bug Fixes
+
+* **renovate:** label only vulnerability fixes as security and pin release binaries by ARG ([#151](https://github.com/nullplatform/actions-nullplatform/issues/151)) ([eb74ded](https://github.com/nullplatform/actions-nullplatform/commit/eb74deda89d9b865a67bc40a0e59b9259317c86e))
+
 ## [1.7.2](https://github.com/nullplatform/actions-nullplatform/compare/v1.7.1...v1.7.2) (2026-10-02)
 
 
