@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.4](https://github.com/nullplatform/actions-nullplatform/compare/v1.7.3...v1.7.4) (2026-10-16)
+
+
+### Bug Fixes
+
+* **deps:** bump renovatebot/github-action ([#154](https://github.com/nullplatform/actions-nullplatform/issues/154)) ([ccd11b7](https://github.com/nullplatform/actions-nullplatform/commit/ccd11b79fc5b3cc7ecd9723d3b37f37ff6cc51be))
+
 ## [1.7.3](https://github.com/nullplatform/actions-nullplatform/compare/v1.7.2...v1.7.3) (2026-10-06)
 
 
