@@ -243,7 +243,8 @@ jobs:
           set -euo pipefail
 
           # An open release PR that already releases this component rebuilds it with fresh packages too.
-          release_pr=$(gh pr list --repo "$REPO" --head release-please--branches--main --state open --json number --jq '.[0].number // empty')
+          # Same-repo PRs only: a fork can name its branch anything.
+          release_pr=$(gh pr list --repo "$REPO" --head release-please--branches--main --state open --json number,isCrossRepository --jq '[.[] | select(.isCrossRepository | not)][0].number // empty')
           if [ -n "$release_pr" ] && gh pr diff "$release_pr" --repo "$REPO" --name-only | grep -qx "$COMPONENT/CHANGELOG.md"; then
             echo "Release PR #$release_pr already releases $COMPONENT; merging it picks up the fixes"
             exit 0
@@ -271,7 +272,7 @@ jobs:
             echo "Merging this lets release-please open the patch release. Opened by the [Renovate run]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)."
           } > body.md
 
-          existing=$(gh pr list --repo "$REPO" --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+          existing=$(gh pr list --repo "$REPO" --head "$BRANCH" --state open --json number,isCrossRepository --jq '[.[] | select(.isCrossRepository | not)][0].number // empty')
           if [ -n "$existing" ]; then
             previous=$(gh api "repos/$REPO/contents/$COMPONENT/.rebuild?ref=$BRANCH" --jq .content | base64 -d)
             if [ "$previous" = "$(cat "$COMPONENT/.rebuild")" ]; then
