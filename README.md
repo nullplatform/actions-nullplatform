@@ -48,9 +48,10 @@ This repository provides reusable GitHub Actions workflows for CI/CD, security s
 | [tofu-test](#tofu-test) | 🚀 Build & Deploy | Runs OpenTofu test suites for infrastructure modules |
 | [Changelog and Release](#changelog-and-release) | 📦 Release & Changelog | Automated version bumping and changelog generation |
 | [tofu-release](#tofu-release) | 📦 Release & Changelog | Creates releases for Terraform modules with version updates |
-| [release-publish-oci](#release-publish-oci) | 📦 Release & Changelog | Chained release: release-please, ECR image publish, artifact registration, release metadata |
+| [release-publish-oci](#release-publish-oci) | 📦 Release & Changelog | Chained release: release-please, ECR image publish, artifact registration, optional package publishing, release metadata |
 | [publish-test-image-oci](#publish-test-image-oci) | 📦 Release & Changelog | Test image from a branch or PR: ECR push with a test- tag, registered as a revision of the release artifact, no release |
 | [register-oci-artifact](#register-oci-artifact) | 📦 Release & Changelog | Registers a pushed image as a nullplatform oci_image artifact (used by the two above) |
+| [publish-package](#publish-package) | 📦 Release & Changelog | Publishes a package revision (e.g. visible to every organization) from the repository's OpenTofu publish stack at a release tag |
 | [tofu-pre-release](#tofu-pre-release) | 📦 Release & Changelog | Previews changelog in pull requests before release |
 | [readme-ai-generator-v2](#readme-ai-generator-v2) | 📚 Documentation | AI-powered README generation for projects |
 | [tofu-docs](#tofu-docs) | 📚 Documentation | Generates Terraform module documentation |
@@ -442,10 +443,16 @@ The standard release pipeline for service repos that ship an OCI image. Chains r
 | register_artifact | Register the image as a nullplatform oci_image artifact | No | true |
 | artifact_visible_to | Visibility selector for the registered artifact | No | organization=* |
 | np_cli_version | np CLI version/channel for artifact registration | No | alpha-packages |
+| package_stack_dir | OpenTofu stack that publishes the package; empty = no package publishing | No | '' |
+| package_tools | Extra tools the package stack needs (`gomplate`, `np`) | No | '' |
 
 **Secrets**
 - `aws_role_arn` (required): AWS IAM Role ARN for OIDC auth against ECR
 - `artifact_np_api_key`: nullplatform API key (required while `register_artifact` is true)
+- `package_np_api_key`: publisher organization API key (required with `package_stack_dir`)
+- `package_state_role_arn`: AWS IAM role ARN for the package stack's state bucket (required with `package_stack_dir`)
+
+With `package_stack_dir`, a `publish-package` job runs after the artifact is registered: see [publish-package](#publish-package).
 
 Also reads the `NP_ARTIFACT_NRN` repository/organization variable (artifact owner NRN), and requires the caller to grant `contents: write`, `pull-requests: write`, and `id-token: write` (a preflight job fails fast when `id-token` is missing).
 
@@ -563,6 +570,59 @@ Registers an image that is already in a registry as a nullplatform `oci_image` a
 **Outputs**: `artifact_id`, `artifact_revision_id`.
 
 Workflows in this repo call it with the path form (`uses: ./.github/workflows/register-oci-artifact.yml`) so it runs from the same ref the caller pinned. Other repos can call it like any reusable workflow.
+
+### publish-package
+
+Publishes a nullplatform package revision for a release. It checks out the release tag and applies the caller's OpenTofu **publish stack** with the image digest the same release pushed, so the revision pins exactly that tag's specs and image. `release-publish-oci` calls it after registering the artifact when `package_stack_dir` is set. Other repos can call it like any reusable workflow.
+
+The stack, in the caller repository, decides **what** is published: specs, artifacts, and visibility (`organization=*` for a package every organization can install). This workflow decides **how**: the tag checkout, the state backend, the tools and the credentials. The contract is four variables, passed as `TF_VAR_*`. A stack declares the ones it uses; undeclared ones are ignored.
+
+| Variable | Value |
+|---|---|
+| `publisher_nrn` | `NP_ARTIFACT_NRN`, the organization that owns the package |
+| `release_tag` | The release tag (`vX.Y.Z`). The stack should refuse to publish when its own version does not match it |
+| `image_digest` | Digest of the released image (`sha256:<64 hex>`) |
+| `np_api_key` | The publisher key, for stacks that run `np` in a local-exec |
+
+The provider gets the same key from `NULLPLATFORM_API_KEY`. Only the apply step sees it.
+
+A published revision is immutable. Re-running a release whose image was rebuilt (a new digest for the same version) fails at the apply instead of re-pointing the version.
+
+**Inputs**
+
+| Name | Description | Required | Default |
+|------|-------------|----------|---------|
+| stack_dir | Path of the OpenTofu publish stack in the caller repository | Yes | - |
+| tag | Release tag to publish; the stack is applied from its commit | Yes | - |
+| image_digest | Digest of the image the release pushed | Yes | - |
+| state_key | S3 key of the stack state | No | `<repository>/<stack_dir>.tfstate` |
+| tools | Extra tools the stack needs, space or comma separated: `gomplate`, `np` | No | '' |
+| tofu_version | OpenTofu version | No | 1.13.1 |
+| gomplate_version | gomplate version (checksum verified) | No | v5.0.0 |
+| np_cli_version | np CLI version | No | 2.10.0 |
+
+**Secrets**
+- `np_api_key` (required): API key of the publisher organization, allowed to write the specs and packages the stack publishes
+- `state_role_arn` (required): AWS IAM role ARN, assumed with OIDC, with access to the state bucket
+
+Reads the `NP_ARTIFACT_NRN`, `PACKAGE_TFSTATE_BUCKET` and `PACKAGE_TFSTATE_REGION` repository/organization variables, and fails when any of them is empty. It requires the caller to grant `contents: read` and `id-token: write`. State is one S3 object per repository and stack, with native locking (`use_lockfile`).
+
+**Usage** (through `release-publish-oci`)
+
+```yaml
+jobs:
+  release:
+    uses: nullplatform/actions-nullplatform/.github/workflows/release-publish-oci.yml@v1
+    with:
+      image_name: services/s3
+      existing_tag: ${{ inputs.existing_tag || '' }}
+      package_stack_dir: aws-s3-bucket/publish
+    secrets:
+      aws_role_arn: ${{ secrets.AWS_ROLE_ARN_ECR_PUSH }}
+      artifact_np_api_key: ${{ secrets.ARTIFACT_NP_API_KEY }}
+      package_np_api_key: ${{ secrets.PACKAGE_NP_API_KEY }}
+      package_state_role_arn: ${{ secrets.AWS_ROLE_ARN_PACKAGE_STATE }}
+```
 
 ## Notes
 
