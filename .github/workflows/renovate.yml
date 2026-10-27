@@ -32,6 +32,10 @@ on:
         type: choice
         options: [info, debug]
         default: info
+      force_rebuild:
+        description: 'Open the rebuild PR for this image even if its scan finds nothing (repo/component, e.g. k8s-tools/traffic-manager)'
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -111,3 +115,191 @@ jobs:
               echo "${rows}"
             fi
           } | tee -a "$GITHUB_STEP_SUMMARY"
+
+  # Renovate bumps pins; it cannot see OS packages. A published image only picks up fixed base
+  # packages when something rebuilds it, so this scans each image's published version and, when
+  # packages the image adds on top of its base have fixed CRITICAL/HIGH CVEs, opens a
+  # `fix(<component>)` PR touching <component>/.rebuild. Merging it lets release-please cut the patch
+  # release, which rebuilds with a fresh package layer. Packages of the base are fixed where the base
+  # is built and arrive through the Dependabot FROM bump, so they only warn here.
+  refresh-images:
+    needs: renovate
+    # A Renovate failure must not hold back CVE rebuilds.
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - repo: k8s-tools
+            component: logs-controller
+            image: public.ecr.aws/nullplatform/k8s-logs-controller
+          - repo: k8s-tools
+            component: traffic-manager
+            image: public.ecr.aws/nullplatform/k8s-traffic-manager
+    env:
+      REPO: nullplatform/${{ matrix.repo }}
+      COMPONENT: ${{ matrix.component }}
+      IMAGE: ${{ matrix.image }}
+      BRANCH: fix/rebuild-${{ matrix.component }}
+      FORCE: ${{ inputs.force_rebuild == format('{0}/{1}', matrix.repo, matrix.component) }}
+    steps:
+      - name: App token
+        id: app
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: Iv23liSjqC5OQnkfqmrv
+          private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
+          owner: nullplatform
+          repositories: ${{ matrix.repo }}
+
+      - name: Checkout ${{ matrix.repo }}
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ env.REPO }}
+          token: ${{ steps.app.outputs.token }}
+          persist-credentials: false
+
+      - name: Resolve the published tag
+        id: tag
+        run: |
+          set -euo pipefail
+          version=$(jq -r --arg k "$COMPONENT" '.[$k]' .release-please-manifest.json)
+          # Releases have been published both as vX.Y.Z and X.Y.Z.
+          for tag in "v$version" "$version"; do
+            if docker buildx imagetools inspect "$IMAGE:$tag" > /dev/null 2>&1; then
+              echo "ref=$IMAGE:$tag" >> "$GITHUB_OUTPUT"
+              echo "Scanning $IMAGE:$tag"
+              exit 0
+            fi
+          done
+          echo "::error::$COMPONENT $version is not published as $IMAGE:v$version or $IMAGE:$version"
+          exit 1
+
+      - name: Scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: 'v0.74.0'
+          scan-type: image
+          image-ref: ${{ steps.tag.outputs.ref }}
+          vuln-type: os
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          format: json
+          output: trivy.json
+          exit-code: '0'
+
+      - name: Evaluate
+        id: eval
+        run: |
+          set -euo pipefail
+          eosl=$(jq -r '.Metadata.OS.EOSL // false' trivy.json)
+          os=$(jq -r '"\(.Metadata.OS.Family // "?") \(.Metadata.OS.Name // "?")"' trivy.json)
+          echo "eosl=$eosl" >> "$GITHUB_OUTPUT"
+          if [ "$eosl" = true ]; then
+            echo "::error::$IMAGE runs on $os, which no longer gets security fixes: bump the base image"
+          fi
+
+          # Packages the base installs: a rebuild keeps the pinned base, so it cannot fix them.
+          base=$(awk 'toupper($1) == "FROM" {ref = $2} END {print ref}' "$COMPONENT/Dockerfile")
+          : > base-packages.txt
+          case "$base" in
+            *worker-bridge*) docker run --rm --entrypoint apk "$base" info > base-packages.txt ;;
+          esac
+
+          # shellcheck disable=SC2016 # $base and $p are jq variables
+          own='[.Results[]?.Vulnerabilities[]? | select(.PkgName as $p | ($base | split("\n") | index($p)) | not)]'
+          jq -r --rawfile base base-packages.txt "$own"' | map("\(.VulnerabilityID) \(.PkgName) \(.InstalledVersion) -> \(.FixedVersion)") | unique | .[]' trivy.json > findings.txt
+          jq -r --rawfile base base-packages.txt "$own"' | map(.VulnerabilityID) | unique | .[]' trivy.json > cves.txt
+          jq -r --rawfile base base-packages.txt '[.Results[]?.Vulnerabilities[]? | select(.PkgName as $p | ($base | split("\n") | index($p))) | "\(.VulnerabilityID) \(.PkgName) \(.InstalledVersion) -> \(.FixedVersion)"] | unique | .[]' trivy.json > base-findings.txt
+          count=$(wc -l < cves.txt | tr -d ' ')
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "## $COMPONENT ($os): $count fixable CRITICAL/HIGH in packages it adds"
+            if [ -s findings.txt ]; then echo '```'; cat findings.txt; echo '```'; fi
+            if [ -s base-findings.txt ]; then
+              echo "Fixed upstream in packages of the base \`$base\`: they arrive with its Dependabot bump."
+              echo '```'; cat base-findings.txt; echo '```'
+            fi
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+          if [ "$count" -gt 0 ] || [ "$FORCE" = true ]; then
+            echo "rebuild=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "rebuild=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open or update the rebuild PR
+        if: steps.eval.outputs.rebuild == 'true' && env.RENOVATE_DRY_RUN == ''
+        env:
+          # The App token: its PRs run checks, and it is already the identity behind Renovate's PRs.
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          APP_SLUG: ${{ steps.app.outputs.app-slug }}
+          COUNT: ${{ steps.eval.outputs.count }}
+          REF: ${{ steps.tag.outputs.ref }}
+        run: |
+          set -euo pipefail
+
+          # An open release PR that already releases this component rebuilds it with fresh packages too.
+          # Same-repo PRs only: a fork can name its branch anything.
+          release_pr=$(gh pr list --repo "$REPO" --head release-please--branches--main --state open --json number,isCrossRepository --jq '[.[] | select(.isCrossRepository | not)][0].number // empty')
+          if [ -n "$release_pr" ] && gh pr diff "$release_pr" --repo "$REPO" --name-only | grep -qx "$COMPONENT/CHANGELOG.md"; then
+            echo "Release PR #$release_pr already releases $COMPONENT; merging it picks up the fixes"
+            exit 0
+          fi
+
+          if [ "$COUNT" -gt 0 ]; then
+            first=$(head -n 2 cves.txt | paste -sd, - | sed 's/,/, /g')
+            more=$((COUNT - 2))
+            title="fix($COMPONENT): rebuild for $first"
+            if [ "$more" -gt 0 ]; then title="$title and $more more"; fi
+          else
+            title="fix($COMPONENT): rebuild to refresh base packages"
+          fi
+
+          { echo "Scanned: $REF"; echo; cat findings.txt; } > "$COMPONENT/.rebuild"
+          {
+            echo "Rebuilds \`$COMPONENT\` so its next patch release picks up packages the scan found fixed upstream."
+            echo
+            echo "Scanned \`$REF\` (CRITICAL/HIGH, fixed only, OS packages):"
+            echo
+            echo '```'
+            if [ -s findings.txt ]; then cat findings.txt; else echo "(none: forced rebuild)"; fi
+            echo '```'
+            echo
+            echo "Merging this lets release-please open the patch release. Opened by the [Renovate run]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)."
+          } > body.md
+
+          existing=$(gh pr list --repo "$REPO" --head "$BRANCH" --state open --json number,isCrossRepository --jq '[.[] | select(.isCrossRepository | not)][0].number // empty')
+          if [ -n "$existing" ]; then
+            previous=$(gh api "repos/$REPO/contents/$COMPONENT/.rebuild?ref=$BRANCH" --jq .content | base64 -d)
+            if [ "$previous" = "$(cat "$COMPONENT/.rebuild")" ]; then
+              echo "Rebuild PR #$existing is open and up to date"
+              exit 0
+            fi
+          fi
+
+          git config user.name "${APP_SLUG}[bot]"
+          git config user.email "${APP_SLUG}[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add "$COMPONENT/.rebuild"
+          git commit -m "$title"
+          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" "HEAD:refs/heads/$BRANCH"
+
+          if [ -n "$existing" ]; then
+            gh pr edit "$existing" --repo "$REPO" --title "$title" --body-file body.md
+            echo "Updated rebuild PR #$existing"
+            exit 0
+          fi
+
+          labels=dependencies
+          # "security" is what Vanta tracks as a remediation task: only for real CVE fixes, not forced rebuilds.
+          if [ "$COUNT" -gt 0 ]; then labels="$labels,security"; fi
+          gh pr create --repo "$REPO" --base main --head "$BRANCH" --title "$title" --body-file body.md \
+            --label "$labels" --reviewer gdrojas
+
+      - name: Fail on end-of-life base
+        if: steps.eval.outputs.eosl == 'true'
+        run: exit 1
