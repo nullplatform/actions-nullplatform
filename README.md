@@ -620,7 +620,9 @@ jobs:
     secrets:
       aws_role_arn: ${{ secrets.AWS_ROLE_ARN_ECR_PUSH }}
       artifact_np_api_key: ${{ secrets.ARTIFACT_NP_API_KEY }}
-      package_np_api_key: ${{ secrets.PACKAGE_NP_API_KEY }}
+      # The publisher key that registers the artifact also works here, as long
+      # as it may write specs and packages.
+      package_np_api_key: ${{ secrets.ARTIFACT_NP_API_KEY }}
       package_state_role_arn: ${{ secrets.AWS_ROLE_ARN_PACKAGE_STATE }}
 ```
 
