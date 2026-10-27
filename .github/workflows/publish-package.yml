@@ -101,6 +101,10 @@ jobs:
         working-directory: .
         env:
           DIGEST: ${{ inputs.image_digest }}
+          # Only whether each secret is set, never its value: a secret the
+          # caller references but never created arrives as an empty string.
+          HAS_NP_API_KEY: ${{ secrets.np_api_key != '' }}
+          HAS_STATE_ROLE_ARN: ${{ secrets.state_role_arn != '' }}
         run: |
           missing=""
           [ -n "$PUBLISHER_NRN" ] || missing="$missing NP_ARTIFACT_NRN"
@@ -108,6 +112,13 @@ jobs:
           [ -n "$TFSTATE_REGION" ] || missing="$missing PACKAGE_TFSTATE_REGION"
           if [ -n "$missing" ]; then
             echo "::error::package publishing needs the repository/organization variables:$missing"
+            exit 1
+          fi
+          missing=""
+          [ "$HAS_NP_API_KEY" = "true" ] || missing="$missing np_api_key"
+          [ "$HAS_STATE_ROLE_ARN" = "true" ] || missing="$missing state_role_arn"
+          if [ -n "$missing" ]; then
+            echo "::error::package publishing needs the secrets:$missing (release-publish-oci: package_np_api_key, package_state_role_arn). Check that the caller passes them and that the repository or organization secrets they reference exist."
             exit 1
           fi
           if ! printf '%s' "$DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
