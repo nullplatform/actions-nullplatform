@@ -177,6 +177,7 @@ jobs:
               fi
               grep -qE '429 Too Many Requests|TOOMANYREQUESTS' <<< "$out" || break
               if [ "$attempt" -eq 4 ]; then
+                echo "$out"
                 echo "::error::ECR Public kept throttling the lookup of $IMAGE:$tag"
                 exit 1
               fi
