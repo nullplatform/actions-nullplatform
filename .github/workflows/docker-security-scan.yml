@@ -56,18 +56,42 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
+      # A run step does not see the cache service variables that type=gha needs;
+      # build-push-action exposed them itself.
+      - name: Expose GitHub runtime for the build cache
+        uses: crazy-max/ghaction-github-runtime@v4
+
+      # Base images on ECR Public are pulled anonymously, and ECR Public throttles
+      # per IP with a 429 that GitHub runners, sharing their IPs, hit often. Logging
+      # in would not cover Dependabot pull requests (no secrets), so a throttled
+      # build is retried with backoff; any other failure fails at once.
       - name: Build image for scanning
-        uses: docker/build-push-action@v7
-        with:
-          context: ${{ inputs.context }}
-          file: ${{ inputs.context }}/${{ inputs.dockerfile }}
-          platforms: linux/amd64
-          push: false
-          load: true
-          tags: ${{ inputs.image_name }}:scan
-          build-args: ${{ inputs.build_args }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+        env:
+          CONTEXT: ${{ inputs.context }}
+          DOCKERFILE: ${{ inputs.context }}/${{ inputs.dockerfile }}
+          IMAGE: ${{ inputs.image_name }}:scan
+          BUILD_ARGS: ${{ inputs.build_args }}
+        run: |
+          args=()
+          while IFS= read -r line; do
+            [ -n "$line" ] && args+=(--build-arg "$line")
+          done <<< "$BUILD_ARGS"
+          for attempt in 1 2 3 4; do
+            if docker buildx build --platform linux/amd64 --load -t "$IMAGE" -f "$DOCKERFILE" \
+                --cache-from type=gha --cache-to type=gha,mode=max \
+                ${args[@]+"${args[@]}"} "$CONTEXT" 2>&1 | tee "$RUNNER_TEMP/build.log"; then
+              exit 0
+            fi
+            if ! grep -qE '429 Too Many Requests|TOOMANYREQUESTS' "$RUNNER_TEMP/build.log"; then
+              exit 1
+            fi
+            if [ "$attempt" -lt 4 ]; then
+              echo "::warning::ECR Public throttled the base pull (attempt $attempt); retrying in $((attempt * 30))s"
+              sleep $((attempt * 30))
+            fi
+          done
+          echo "::error::ECR Public kept throttling the base pull"
+          exit 1
 
       - name: Run Trivy vulnerability scanner
         id: scan
