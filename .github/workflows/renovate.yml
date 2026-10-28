@@ -166,13 +166,23 @@ jobs:
         run: |
           set -euo pipefail
           version=$(jq -r --arg k "$COMPONENT" '.[$k]' .release-please-manifest.json)
-          # Releases have been published both as vX.Y.Z and X.Y.Z.
+          # Releases have been published both as vX.Y.Z and X.Y.Z. ECR Public throttles
+          # anonymous lookups per IP with a 429, which must not read as "not published".
           for tag in "v$version" "$version"; do
-            if docker buildx imagetools inspect "$IMAGE:$tag" > /dev/null 2>&1; then
-              echo "ref=$IMAGE:$tag" >> "$GITHUB_OUTPUT"
-              echo "Scanning $IMAGE:$tag"
-              exit 0
-            fi
+            for attempt in 1 2 3 4; do
+              if out=$(docker buildx imagetools inspect "$IMAGE:$tag" 2>&1); then
+                echo "ref=$IMAGE:$tag" >> "$GITHUB_OUTPUT"
+                echo "Scanning $IMAGE:$tag"
+                exit 0
+              fi
+              grep -qE '429 Too Many Requests|TOOMANYREQUESTS' <<< "$out" || break
+              if [ "$attempt" -eq 4 ]; then
+                echo "::error::ECR Public kept throttling the lookup of $IMAGE:$tag"
+                exit 1
+              fi
+              echo "::warning::ECR Public throttled the lookup of $IMAGE:$tag (attempt $attempt); retrying in $((attempt * 30))s"
+              sleep $((attempt * 30))
+            done
           done
           echo "::error::$COMPONENT $version is not published as $IMAGE:v$version or $IMAGE:$version"
           exit 1
