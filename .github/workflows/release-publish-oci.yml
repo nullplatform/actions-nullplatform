@@ -4,8 +4,10 @@ name: release-publish-oci
 # (scopes-lambda and the family of service repos modeled on it):
 #
 #   preflight ──▶ release-please ──▶ docker build+push ECR ──▶ register artifact ──▶ finalize
-#                                                                                   (release metadata +
-#                                                                                    publish)
+#                                                                        │          (release metadata +
+#                                                                        │           publish)
+#                                                                        └──▶ publish package
+#                                                                             (only with package_stack_dir)
 #
 # Everything runs in ONE workflow run, chained on `release_created`. This is
 # deliberate: release-please creates tags/releases with GITHUB_TOKEN, and
@@ -53,6 +55,12 @@ name: release-publish-oci
 #
 # Artifact registration additionally reads the NP_ARTIFACT_NRN repository (or
 # organization) variable — the owner NRN for the registered artifact.
+#
+# Package publishing (opt-in): set package_stack_dir to the repository's
+# OpenTofu publish stack and pass package_np_api_key + package_state_role_arn;
+# after the artifact is registered, publish-package applies the stack at the
+# release tag with the pushed digest (see publish-package.yml for the stack
+# contract and the PACKAGE_TFSTATE_* variables).
 #
 # Nested `uses: ./.github/workflows/...` below resolves against THIS repo at
 # the ref the caller pinned: per GitHub's reusable-workflows docs, the path
@@ -133,12 +141,28 @@ on:
         required: false
         type: string
         default: 'alpha'
+      package_stack_dir:
+        description: 'OpenTofu stack that publishes the package (e.g. aws-s3-bucket/publish); empty = no package publishing'
+        required: false
+        type: string
+        default: ''
+      package_tools:
+        description: 'Extra tools the package stack needs, space or comma separated: gomplate, np'
+        required: false
+        type: string
+        default: ''
     secrets:
       aws_role_arn:
         description: 'AWS IAM Role ARN for OIDC auth against ECR'
         required: true
       artifact_np_api_key:
         description: 'nullplatform API key for artifact registration (required while register_artifact is true)'
+        required: false
+      package_np_api_key:
+        description: 'Publisher organization API key for package publishing (required with package_stack_dir)'
+        required: false
+      package_state_role_arn:
+        description: 'AWS IAM role ARN for the package stack state bucket (required with package_stack_dir)'
         required: false
     outputs:
       release_created:
@@ -225,6 +249,22 @@ jobs:
       np_cli_version: ${{ inputs.np_cli_version }}
     secrets:
       np_api_key: ${{ secrets.artifact_np_api_key }}
+
+  # Opt-in: the package revision pins the artifact registered above, so it
+  # runs only once registration succeeded.
+  publish-package:
+    name: Publish package
+    needs: [release, publish, register-artifact]
+    if: ${{ !cancelled() && inputs.package_stack_dir != '' && needs.register-artifact.result == 'success' }}
+    uses: ./.github/workflows/publish-package.yml
+    with:
+      stack_dir: ${{ inputs.package_stack_dir }}
+      tag: ${{ inputs.existing_tag || needs.release.outputs.tag_name }}
+      image_digest: ${{ needs.publish.outputs.image_digest }}
+      tools: ${{ inputs.package_tools }}
+    secrets:
+      np_api_key: ${{ secrets.package_np_api_key }}
+      state_role_arn: ${{ secrets.package_state_role_arn }}
 
   finalize-release:
     name: Finalize release

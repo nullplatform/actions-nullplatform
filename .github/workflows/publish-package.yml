@@ -1,0 +1,218 @@
+name: publish-package
+
+# Publishes a nullplatform package revision for a release: applies the
+# caller's OpenTofu "publish" stack at the release tag, so the revision pins
+# exactly that tag's specs and the image digest the same release pushed.
+# release-publish-oci calls it after the artifact is registered (input
+# package_stack_dir); other repos can call it like any reusable workflow.
+#
+# The stack lives in the caller repository and owns WHAT is published (specs,
+# visibility — organization=* for a package every organization can install —,
+# artifacts). This workflow owns HOW: the checkout of the tag, the state
+# backend, the tools, the credentials. The contract is four variables, passed
+# as TF_VAR_* (a stack declares the ones it uses; undeclared ones are ignored):
+#
+#   publisher_nrn  NP_ARTIFACT_NRN, the organization that owns the package
+#   release_tag    the release tag (vX.Y.Z); the stack should refuse to publish
+#                  when its own version does not match it
+#   image_digest   digest of the worker image, sha256:<64 hex>
+#   np_api_key     the publisher key, for stacks that run `np` (local-exec)
+#
+# The provider reads the same key from NULLPLATFORM_API_KEY. Only the apply
+# step sees it.
+#
+# State: one S3 object per repository and stack, in the bucket named by the
+# PACKAGE_TFSTATE_BUCKET variable (repository or organization level), with
+# native locking. A published revision is immutable: re-running a release whose
+# image was rebuilt (a new digest for the same version) fails at the apply
+# instead of re-pointing the version.
+
+on:
+  workflow_call:
+    inputs:
+      stack_dir:
+        description: 'Path of the OpenTofu publish stack in the caller repository (e.g. aws-s3-bucket/publish)'
+        required: true
+        type: string
+      tag:
+        description: 'Release tag to publish (vX.Y.Z); the stack is applied from its commit'
+        required: true
+        type: string
+      image_digest:
+        description: 'Digest of the image the release pushed (sha256:...)'
+        required: true
+        type: string
+      state_key:
+        description: 'S3 key of the stack state (empty = <repository>/<stack_dir>.tfstate)'
+        required: false
+        type: string
+        default: ''
+      tools:
+        description: 'Extra tools the stack needs, space or comma separated: gomplate, np'
+        required: false
+        type: string
+        default: ''
+      tofu_version:
+        description: 'OpenTofu version'
+        required: false
+        type: string
+        default: '1.13.1'
+      gomplate_version:
+        description: 'gomplate version, when tools includes gomplate'
+        required: false
+        type: string
+        default: 'v5.0.0'
+      np_cli_version:
+        description: 'np CLI version, when tools includes np'
+        required: false
+        type: string
+        default: '2.10.0'
+    secrets:
+      np_api_key:
+        description: 'API key of the publisher organization (NP_ARTIFACT_NRN), allowed to write the specs and packages the stack publishes'
+        required: true
+      state_role_arn:
+        description: 'AWS IAM role ARN, assumed with OIDC, with access to the PACKAGE_TFSTATE_BUCKET bucket'
+        required: true
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    name: Publish package
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: ${{ inputs.stack_dir }}
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      TAG: ${{ inputs.tag }}
+      PUBLISHER_NRN: ${{ vars.NP_ARTIFACT_NRN }}
+      TFSTATE_BUCKET: ${{ vars.PACKAGE_TFSTATE_BUCKET }}
+      TFSTATE_REGION: ${{ vars.PACKAGE_TFSTATE_REGION }}
+      TFSTATE_KEY: ${{ inputs.state_key || format('{0}/{1}.tfstate', github.event.repository.name, inputs.stack_dir) }}
+      TOOLS: ${{ inputs.tools }}
+    steps:
+      # Publishing is a declared choice: missing wiring is an error, not a
+      # silent skip (a typo'd variable name must not produce a green run).
+      - name: Check wiring
+        working-directory: .
+        env:
+          DIGEST: ${{ inputs.image_digest }}
+          # Only whether each secret is set, never its value: a secret the
+          # caller references but never created arrives as an empty string.
+          HAS_NP_API_KEY: ${{ secrets.np_api_key != '' }}
+          HAS_STATE_ROLE_ARN: ${{ secrets.state_role_arn != '' }}
+        run: |
+          missing=""
+          [ -n "$PUBLISHER_NRN" ] || missing="$missing NP_ARTIFACT_NRN"
+          [ -n "$TFSTATE_BUCKET" ] || missing="$missing PACKAGE_TFSTATE_BUCKET"
+          [ -n "$TFSTATE_REGION" ] || missing="$missing PACKAGE_TFSTATE_REGION"
+          if [ -n "$missing" ]; then
+            echo "::error::package publishing needs the repository/organization variables:$missing"
+            exit 1
+          fi
+          missing=""
+          [ "$HAS_NP_API_KEY" = "true" ] || missing="$missing np_api_key"
+          [ "$HAS_STATE_ROLE_ARN" = "true" ] || missing="$missing state_role_arn"
+          if [ -n "$missing" ]; then
+            echo "::error::package publishing needs the secrets:$missing (release-publish-oci: package_np_api_key, package_state_role_arn). Check that the caller passes them and that the repository or organization secrets they reference exist."
+            exit 1
+          fi
+          if ! printf '%s' "$DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+            echo "::error::image_digest must look like sha256:<64 hex>, got '$DIGEST'"
+            exit 1
+          fi
+          if ! printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+'; then
+            echo "::error::tag must be a release tag (vX.Y.Z), got '$TAG'"
+            exit 1
+          fi
+          if [ -z "$ACTIONS_ID_TOKEN_REQUEST_URL" ]; then
+            echo "::error::the calling workflow must grant 'id-token: write' (required for the state bucket role)"
+            exit 1
+          fi
+
+      # The revision must pin the specs of the released tag, not of the
+      # triggering commit (they differ on existing_tag backfills).
+      - name: Checkout release tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag }}
+
+      - name: Install tools
+        if: ${{ inputs.tools != '' }}
+        env:
+          GOMPLATE_VERSION: ${{ inputs.gomplate_version }}
+          NP_CLI_VERSION: ${{ inputs.np_cli_version }}
+        run: |
+          set -euo pipefail
+          for TOOL in ${TOOLS//,/ }; do
+            case "$TOOL" in
+              gomplate)
+                BASE="https://github.com/hairyhenderson/gomplate/releases/download/${GOMPLATE_VERSION}"
+                curl -fsSL -o "$RUNNER_TEMP/gomplate" "$BASE/gomplate_linux-amd64"
+                curl -fsSL -o "$RUNNER_TEMP/gomplate.sha256" "$BASE/checksums-${GOMPLATE_VERSION}_sha256.txt"
+                (cd "$RUNNER_TEMP" && grep '/gomplate_linux-amd64$' gomplate.sha256 | sed 's|  .*$|  gomplate|' | sha256sum -c -)
+                sudo install -m 0755 "$RUNNER_TEMP/gomplate" /usr/local/bin/gomplate
+                gomplate --version
+                ;;
+              np)
+                curl -fsSL https://cli.nullplatform.com/install.sh | VERSION="$NP_CLI_VERSION" sh
+                echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+                "$HOME/.local/bin/np" --version
+                ;;
+              *)
+                echo "::error::unknown tool '$TOOL' (supported: gomplate, np)"
+                exit 1
+                ;;
+            esac
+          done
+
+      - name: Configure AWS credentials (tofu state)
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.state_role_arn }}
+          aws-region: ${{ vars.PACKAGE_TFSTATE_REGION }}
+
+      - name: Setup OpenTofu
+        uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        with:
+          tofu_version: ${{ inputs.tofu_version }}
+
+      - name: Init
+        run: >-
+          tofu init -input=false
+          -backend-config="bucket=${TFSTATE_BUCKET}"
+          -backend-config="key=${TFSTATE_KEY}"
+          -backend-config="region=${TFSTATE_REGION}"
+          -backend-config="use_lockfile=true"
+
+      - name: Apply
+        env:
+          NULLPLATFORM_API_KEY: ${{ secrets.np_api_key }}
+          TF_VAR_np_api_key: ${{ secrets.np_api_key }}
+          TF_VAR_publisher_nrn: ${{ vars.NP_ARTIFACT_NRN }}
+          TF_VAR_release_tag: ${{ inputs.tag }}
+          TF_VAR_image_digest: ${{ inputs.image_digest }}
+        run: tofu apply -input=false -auto-approve
+
+      - name: Summary
+        if: ${{ success() }}
+        env:
+          STACK_DIR: ${{ inputs.stack_dir }}
+        run: |
+          {
+            echo "## Package published"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Release | \`$TAG\` |"
+            echo "| Stack | \`$STACK_DIR\` |"
+            echo "| Publisher | \`$PUBLISHER_NRN\` |"
+            echo
+            echo '```'
+            tofu output -no-color 2>/dev/null || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
