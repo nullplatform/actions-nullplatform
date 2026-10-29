@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.8.0](https://github.com/nullplatform/actions-nullplatform/compare/v1.7.3...v1.8.0) (2026-10-29)
+
+
+### Features
+
+* **release:** publish a package revision from the caller's OpenTofu stack ([#158](https://github.com/nullplatform/actions-nullplatform/issues/158)) ([6860667](https://github.com/nullplatform/actions-nullplatform/commit/6860667bf380f1360919f6a013e81dd4c8c7c547))
+
+
+### Bug Fixes
+
+* **deps:** bump renovatebot/github-action ([#154](https://github.com/nullplatform/actions-nullplatform/issues/154)) ([ccd11b7](https://github.com/nullplatform/actions-nullplatform/commit/ccd11b79fc5b3cc7ecd9723d3b37f37ff6cc51be))
+* ecr-security-scan scans again; renovate run rebuilds images with fixed OS CVEs ([#157](https://github.com/nullplatform/actions-nullplatform/issues/157)) ([e58b181](https://github.com/nullplatform/actions-nullplatform/commit/e58b18116a6d79ffcf48d4c3704d2c2fe6d9490b))
+* retry ECR Public throttling in docker-security-scan and refresh-images ([#159](https://github.com/nullplatform/actions-nullplatform/issues/159)) ([2749057](https://github.com/nullplatform/actions-nullplatform/commit/27490574d8fa9914a084881f4cddf6ccb1e3e06e))
+
 ## [1.7.3](https://github.com/nullplatform/actions-nullplatform/compare/v1.7.2...v1.7.3) (2026-10-06)
 
 
