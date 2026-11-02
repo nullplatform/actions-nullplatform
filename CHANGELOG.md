@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.8.1](https://github.com/nullplatform/actions-nullplatform/compare/v1.8.0...v1.8.1) (2026-11-02)
+
+
+### Bug Fixes
+
+* **deps:** bump renovatebot/github-action ([#156](https://github.com/nullplatform/actions-nullplatform/issues/156)) ([1befbd2](https://github.com/nullplatform/actions-nullplatform/commit/1befbd227462ce30a34764fbd1edeb22eef0f0da))
+* **deps:** bump renovatebot/github-action ([#161](https://github.com/nullplatform/actions-nullplatform/issues/161)) ([5742944](https://github.com/nullplatform/actions-nullplatform/commit/5742944081ececfcd7a01734467f6a3298b526e5))
+
 ## [1.8.0](https://github.com/nullplatform/actions-nullplatform/compare/v1.7.3...v1.8.0) (2026-10-29)
 
 
