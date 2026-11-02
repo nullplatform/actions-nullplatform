@@ -309,7 +309,7 @@ jobs:
           # "security" is what Vanta tracks as a remediation task: only for real CVE fixes, not forced rebuilds.
           if [ "$COUNT" -gt 0 ]; then labels="$labels,security"; fi
           gh pr create --repo "$REPO" --base main --head "$BRANCH" --title "$title" --body-file body.md \
-            --label "$labels" --reviewer gdrojas
+            --label "$labels"
 
       - name: Fail on end-of-life base
         if: steps.eval.outputs.eosl == 'true'

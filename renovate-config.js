@@ -56,8 +56,8 @@ module.exports = {
   // require the App to hold Workflows: write across the org. Dependabot owns those files.
   enabledManagers: ['custom.regex', 'gomod', 'npm'],
   postUpdateOptions: ['gomodTidy'],
-  // Nobody watches these repos and there is no CODEOWNERS: without this a PR notifies no one.
-  reviewers: ['gdrojas'],
+  // No fixed reviewer: anyone may approve and merge these PRs. bot-prs-digest posts the open ones to
+  // Slack every cycle, which is how they get noticed.
 
   // The workflow cron is the scheduler; Renovate itself must not add a second gate.
   schedule: ['at any time'],
