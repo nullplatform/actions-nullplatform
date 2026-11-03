@@ -210,7 +210,7 @@ jobs:
               else [] end) as $confblocks
             | (if ($broken|length) > 0 then
                 [{type:"header", text:{type:"plain_text", text:("Releases failing on main: " + ($broken|length|tostring)), emoji:true}},
-                 {type:"section", text:{type:"mrkdwn", text:(($broken | map("• *" + .repo + "*: <" + .url + "|last release run failed> " + (.updated|.[0:10]) + " · " + (.title|.[0:70])) | join("\n")) | .[0:2900])}},
+                 {type:"section", text:{type:"mrkdwn", text:(($broken | map("• *" + .repo + "*: <" + .url + "|last release run failed> " + (.updated|.[0:10]) + " · " + (.title|.[0:70]|gsub("&";"&amp;")|gsub("<";"&lt;")|gsub(">";"&gt;"))) | join("\n")) | .[0:2900])}},
                  {type:"context", elements:[{type:"mrkdwn", text:"The last finished release.yml run on the default branch failed: whatever merged since the last green run is not published."}]}]
               else [] end) as $relblocks
             | {blocks: ($relblocks + $prblocks + $doneblocks + $confblocks)}' > slack.json
