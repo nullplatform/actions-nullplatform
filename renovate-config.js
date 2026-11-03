@@ -104,6 +104,13 @@ module.exports = {
       matchStrings: ['"cloudwatch_plugin_image":\\s*"(?<currentValue>[0-9][0-9.]*)"'],
       depNameTemplate: 'public.ecr.aws/aws-observability/aws-for-fluent-bit', datasourceTemplate: 'docker', versioningTemplate: 'docker' },
     arg('TOFU', 'opentofu/opentofu'),
+    // The services' do_tofu scripts pin the tofu the agent downloads when the worker has none
+    // (TOFU_VERSION="x.y.z"). Bumping only the Dockerfile ARG left the two apart: sqlserver's
+    // parity test failed on the 1.13.2 bump (services-sqlserver-rds#29), and sns/valkey still
+    // pin 1.12.6 under a 1.13.2 image. Same depName, so both land in the one "pinned binaries" PR.
+    { customType: 'regex', managerFilePatterns: ['/(^|/)do_tofu$/'],
+      matchStrings: ['TOFU_VERSION="v?(?<currentValue>[0-9][0-9.]*)"'],
+      depNameTemplate: 'opentofu/opentofu', datasourceTemplate: 'github-releases', extractVersionTemplate: '^v?(?<version>.*)$' },
     arg('HELM', 'helm/helm'),
     arg('KUBECTL', 'kubernetes/kubernetes'),
     arg('FLUENT_BIT', 'fluent/fluent-bit'),
@@ -129,6 +136,12 @@ module.exports = {
     // Majors are never proposed automatically, for anything. A major is a
     // compatibility decision, not a dependency bump.
     { matchUpdateTypes: ['major'], enabled: false },
+    // Below 1.0, semver puts breaking changes in the minor: @nullplatform/plugin 0.1.9 -> 0.3.0
+    // rewrote defineService and dropped subpaths, and it arrived as a "minor" that built green
+    // and crashed the worker on load (services-public-ecr#15, scopes-databricks#14). An npm 0.x
+    // minor is a major here. gomod stays out on purpose: golang.org/x/* are all v0.x and their
+    // minors are routine (and often security) updates.
+    { matchManagers: ['npm'], matchCurrentVersion: '<1.0.0', matchUpdateTypes: ['minor'], enabled: false },
 
 
     // Ceilings measured in Sep 2026. Raising either one is a policy change.
