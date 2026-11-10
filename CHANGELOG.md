@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.9.0](https://github.com/nullplatform/actions-nullplatform/compare/v1.8.2...v1.9.0) (2026-11-10)
+
+
+### Features
+
+* **publish-package:** take the state bucket and region as secrets ([43a1c0d](https://github.com/nullplatform/actions-nullplatform/commit/43a1c0dd6efced0ddcf5ba1ea2c0d087443baa71))
+* **publish-package:** take the state bucket and region as secrets ([e87deed](https://github.com/nullplatform/actions-nullplatform/commit/e87deed62e40ec2e84924c2301af4bf0cfc26ab2))
+
 ## [1.8.2](https://github.com/nullplatform/actions-nullplatform/compare/v1.8.1...v1.8.2) (2026-11-10)
 
 
