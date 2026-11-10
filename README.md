@@ -438,7 +438,7 @@ The standard release pipeline for service repos that ship an OCI image. Chains r
 | build_args | Docker build arguments (newline-separated) | No | '' |
 | also_tag_latest | Also tag and push the image as latest | No | false |
 | release-type | Release Please release type | No | simple |
-| update_readme_versions | Update ref=vX.Y.Z references in READMEs after release | No | false |
+| update_readme_versions | Move this repository's own `?ref=vX.Y.Z` references in READMEs to the new tag (refs to other repositories are left alone) | No | false |
 | existing_tag | Skip release-please; publish + finalize this existing tag | No | '' |
 | register_artifact | Register the image as a nullplatform oci_image artifact | No | true |
 | artifact_visible_to | Visibility selector for the registered artifact | No | organization=* |

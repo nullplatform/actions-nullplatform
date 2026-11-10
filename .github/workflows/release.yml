@@ -65,16 +65,24 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Update all README versions
+      - name: Update this repository's README versions
+        env:
+          NEW_VERSION: ${{ needs.release.outputs.tag_name }}
         run: |
-          NEW_VERSION="${{ needs.release.outputs.tag_name }}"
-          echo "Updating all READMEs to $NEW_VERSION"
+          # Only references to THIS repository move to the new tag. A README
+          # may also pin other repositories (a service README showing the
+          # tofu-modules module that installs it, for example): those refs
+          # belong to other release lines and stay as their author wrote them.
+          # Matched form, with or without the git:: prefix:
+          #   github.com/<owner>/<repo>[.git][//<path>]?ref=vX.Y.Z
+          REPOSITORY_PATTERN=$(printf '%s' "$GITHUB_REPOSITORY" | sed 's/[.]/\\./g')
+          SOURCE_PATTERN="github\.com/${REPOSITORY_PATTERN}(\.git)?(//[^?[:space:]]*)?\?ref="
+          echo "Updating github.com/$GITHUB_REPOSITORY refs in READMEs to $NEW_VERSION"
 
-          # Find all READMEs with version references (excluding .terraform directories)
           find . -name "README.md" -not -path "*/.terraform/*" -type f | while read -r README; do
-            if grep -q "ref=v[0-9]" "$README"; then
+            if grep -Eq "${SOURCE_PATTERN}v[0-9]" "$README"; then
               echo "Updating $README"
-              sed -i "s/ref=v[0-9]*\.[0-9]*\.[0-9]*/ref=$NEW_VERSION/g" "$README"
+              sed -i -E "s#(${SOURCE_PATTERN})v[0-9]+\.[0-9]+\.[0-9]+#\1${NEW_VERSION}#g" "$README"
             fi
           done
 
