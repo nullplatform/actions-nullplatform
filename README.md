@@ -443,7 +443,7 @@ The standard release pipeline for service repos that ship an OCI image. Chains r
 | register_artifact | Register the image as a nullplatform oci_image artifact | No | true |
 | artifact_visible_to | Visibility selector for the registered artifact | No | organization=* |
 | np_cli_version | np CLI version/channel for artifact registration | No | alpha-packages |
-| package_stack_dir | OpenTofu stack that publishes the package; empty = no package publishing | No | '' |
+| package_stack_dir | OpenTofu stack that publishes the package; empty = no package publishing. The job runs only once `package_state_bucket` is set, and is skipped until then | No | '' |
 | package_tools | Extra tools the package stack needs (`gomplate`, `np`) | No | '' |
 
 **Secrets**
@@ -451,6 +451,8 @@ The standard release pipeline for service repos that ship an OCI image. Chains r
 - `artifact_np_api_key`: nullplatform API key (required while `register_artifact` is true)
 - `package_np_api_key`: publisher organization API key (required with `package_stack_dir`)
 - `package_state_role_arn`: AWS IAM role ARN for the package stack's state bucket (required with `package_stack_dir`)
+- `package_state_bucket`: S3 bucket for the package stack states (required with `package_stack_dir`)
+- `package_state_region`: region of that bucket (required with `package_stack_dir`)
 
 With `package_stack_dir`, a `publish-package` job runs after the artifact is registered: see [publish-package](#publish-package).
 
@@ -604,8 +606,10 @@ A published revision is immutable. Re-running a release whose image was rebuilt 
 **Secrets**
 - `np_api_key` (required): API key of the publisher organization, allowed to write the specs and packages the stack publishes
 - `state_role_arn` (required): AWS IAM role ARN, assumed with OIDC, with access to the state bucket
+- `tfstate_bucket` (required): S3 bucket that keeps the stack states
+- `tfstate_region` (required): region of that bucket
 
-Reads the `NP_ARTIFACT_NRN`, `PACKAGE_TFSTATE_BUCKET` and `PACKAGE_TFSTATE_REGION` repository/organization variables, and fails when any of them is empty. It requires the caller to grant `contents: read` and `id-token: write`. State is one S3 object per repository and stack, with native locking (`use_lockfile`).
+The bucket and its region are secrets, not variables, on purpose: the caller repositories are public and so are their run logs, and GitHub masks only secrets. Reads the `NP_ARTIFACT_NRN` repository/organization variable, and fails when it or any secret is empty. It requires the caller to grant `contents: read` and `id-token: write`. State is one S3 object per repository and stack, with native locking (`use_lockfile`).
 
 **Usage** (through `release-publish-oci`)
 
@@ -624,6 +628,8 @@ jobs:
       # as it may write specs and packages.
       package_np_api_key: ${{ secrets.ARTIFACT_NP_API_KEY }}
       package_state_role_arn: ${{ secrets.AWS_ROLE_ARN_PACKAGE_STATE }}
+      package_state_bucket: ${{ secrets.PACKAGE_TFSTATE_BUCKET }}
+      package_state_region: ${{ secrets.PACKAGE_TFSTATE_REGION }}
 ```
 
 ## Notes

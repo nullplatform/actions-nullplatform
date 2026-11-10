@@ -57,10 +57,15 @@ name: release-publish-oci
 # organization) variable — the owner NRN for the registered artifact.
 #
 # Package publishing (opt-in): set package_stack_dir to the repository's
-# OpenTofu publish stack and pass package_np_api_key + package_state_role_arn;
-# after the artifact is registered, publish-package applies the stack at the
-# release tag with the pushed digest (see publish-package.yml for the stack
-# contract and the PACKAGE_TFSTATE_* variables).
+# OpenTofu publish stack and pass package_np_api_key, package_state_role_arn,
+# package_state_bucket and package_state_region; after the artifact is
+# registered, publish-package applies the stack at the release tag with the
+# pushed digest (see publish-package.yml for the stack contract). The bucket
+# and its region are secrets, not variables: the caller repositories are
+# public and so are their run logs, and GitHub masks only secrets. The job
+# runs only once package_state_bucket is set (preflight reports it), so a
+# repository can name its stack before the state bucket is wired and the
+# release stays green until then.
 #
 # Nested `uses: ./.github/workflows/...` below resolves against THIS repo at
 # the ref the caller pinned: per GitHub's reusable-workflows docs, the path
@@ -164,6 +169,12 @@ on:
       package_state_role_arn:
         description: 'AWS IAM role ARN for the package stack state bucket (required with package_stack_dir)'
         required: false
+      package_state_bucket:
+        description: 'S3 bucket for the package stack states (required with package_stack_dir; a secret so its name stays out of the public run logs)'
+        required: false
+      package_state_region:
+        description: 'Region of the package state bucket (required with package_stack_dir)'
+        required: false
     outputs:
       release_created:
         description: 'true when a release was cut on this run'
@@ -189,6 +200,10 @@ jobs:
   preflight:
     name: Preflight
     runs-on: ubuntu-24.04
+    outputs:
+      # Whether the package state bucket is wired. A job `if:` cannot read
+      # secrets, so the presence check travels through this output.
+      package_state_configured: ${{ steps.package-state.outputs.configured }}
     steps:
       - name: Verify caller grants id-token permission
         run: |
@@ -197,6 +212,13 @@ jobs:
             exit 1
           fi
           echo "id-token permission present"
+
+      - name: Report whether the package state bucket is wired
+        id: package-state
+        env:
+          # Only whether the secret is set, never its value.
+          CONFIGURED: ${{ secrets.package_state_bucket != '' }}
+        run: echo "configured=$CONFIGURED" >> "$GITHUB_OUTPUT"
 
   release:
     needs: preflight
@@ -254,8 +276,8 @@ jobs:
   # runs only once registration succeeded.
   publish-package:
     name: Publish package
-    needs: [release, publish, register-artifact]
-    if: ${{ !cancelled() && inputs.package_stack_dir != '' && needs.register-artifact.result == 'success' }}
+    needs: [preflight, release, publish, register-artifact]
+    if: ${{ !cancelled() && inputs.package_stack_dir != '' && needs.preflight.outputs.package_state_configured == 'true' && needs.register-artifact.result == 'success' }}
     uses: ./.github/workflows/publish-package.yml
     with:
       stack_dir: ${{ inputs.package_stack_dir }}
@@ -265,6 +287,8 @@ jobs:
     secrets:
       np_api_key: ${{ secrets.package_np_api_key }}
       state_role_arn: ${{ secrets.package_state_role_arn }}
+      tfstate_bucket: ${{ secrets.package_state_bucket }}
+      tfstate_region: ${{ secrets.package_state_region }}
 
   finalize-release:
     name: Finalize release

@@ -21,9 +21,10 @@ name: publish-package
 # The provider reads the same key from NULLPLATFORM_API_KEY. Only the apply
 # step sees it.
 #
-# State: one S3 object per repository and stack, in the bucket named by the
-# PACKAGE_TFSTATE_BUCKET variable (repository or organization level), with
-# native locking. A published revision is immutable: re-running a release whose
+# State: one S3 object per repository and stack, in the bucket the caller
+# names through the tfstate_bucket / tfstate_region secrets, with native
+# locking. They are secrets, not variables, on purpose: the caller repositories
+# are public and so are their run logs, and GitHub masks only secrets. A published revision is immutable: re-running a release whose
 # image was rebuilt (a new digest for the same version) fails at the apply
 # instead of re-pointing the version.
 
@@ -72,7 +73,13 @@ on:
         description: 'API key of the publisher organization (NP_ARTIFACT_NRN), allowed to write the specs and packages the stack publishes'
         required: true
       state_role_arn:
-        description: 'AWS IAM role ARN, assumed with OIDC, with access to the PACKAGE_TFSTATE_BUCKET bucket'
+        description: 'AWS IAM role ARN, assumed with OIDC, with access to the state bucket'
+        required: true
+      tfstate_bucket:
+        description: 'S3 bucket that keeps the stack states (a secret, so its name never reaches the public run logs)'
+        required: true
+      tfstate_region:
+        description: 'Region of that bucket (a secret for the same reason)'
         required: true
 
 permissions:
@@ -90,8 +97,8 @@ jobs:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       TAG: ${{ inputs.tag }}
       PUBLISHER_NRN: ${{ vars.NP_ARTIFACT_NRN }}
-      TFSTATE_BUCKET: ${{ vars.PACKAGE_TFSTATE_BUCKET }}
-      TFSTATE_REGION: ${{ vars.PACKAGE_TFSTATE_REGION }}
+      TFSTATE_BUCKET: ${{ secrets.tfstate_bucket }}
+      TFSTATE_REGION: ${{ secrets.tfstate_region }}
       TFSTATE_KEY: ${{ inputs.state_key || format('{0}/{1}.tfstate', github.event.repository.name, inputs.stack_dir) }}
       TOOLS: ${{ inputs.tools }}
     steps:
@@ -105,20 +112,20 @@ jobs:
           # caller references but never created arrives as an empty string.
           HAS_NP_API_KEY: ${{ secrets.np_api_key != '' }}
           HAS_STATE_ROLE_ARN: ${{ secrets.state_role_arn != '' }}
+          HAS_TFSTATE_BUCKET: ${{ secrets.tfstate_bucket != '' }}
+          HAS_TFSTATE_REGION: ${{ secrets.tfstate_region != '' }}
         run: |
-          missing=""
-          [ -n "$PUBLISHER_NRN" ] || missing="$missing NP_ARTIFACT_NRN"
-          [ -n "$TFSTATE_BUCKET" ] || missing="$missing PACKAGE_TFSTATE_BUCKET"
-          [ -n "$TFSTATE_REGION" ] || missing="$missing PACKAGE_TFSTATE_REGION"
-          if [ -n "$missing" ]; then
-            echo "::error::package publishing needs the repository/organization variables:$missing"
+          if [ -z "$PUBLISHER_NRN" ]; then
+            echo "::error::package publishing needs the NP_ARTIFACT_NRN repository/organization variable"
             exit 1
           fi
           missing=""
           [ "$HAS_NP_API_KEY" = "true" ] || missing="$missing np_api_key"
           [ "$HAS_STATE_ROLE_ARN" = "true" ] || missing="$missing state_role_arn"
+          [ "$HAS_TFSTATE_BUCKET" = "true" ] || missing="$missing tfstate_bucket"
+          [ "$HAS_TFSTATE_REGION" = "true" ] || missing="$missing tfstate_region"
           if [ -n "$missing" ]; then
-            echo "::error::package publishing needs the secrets:$missing (release-publish-oci: package_np_api_key, package_state_role_arn). Check that the caller passes them and that the repository or organization secrets they reference exist."
+            echo "::error::package publishing needs the secrets:$missing (release-publish-oci: package_np_api_key, package_state_role_arn, package_state_bucket, package_state_region). Check that the caller passes them and that the repository or organization secrets they reference exist."
             exit 1
           fi
           if ! printf '%s' "$DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
@@ -174,7 +181,7 @@ jobs:
         uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ secrets.state_role_arn }}
-          aws-region: ${{ vars.PACKAGE_TFSTATE_REGION }}
+          aws-region: ${{ secrets.tfstate_region }}
 
       - name: Setup OpenTofu
         uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
