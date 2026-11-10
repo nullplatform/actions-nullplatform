@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.8.2](https://github.com/nullplatform/actions-nullplatform/compare/v1.8.1...v1.8.2) (2026-11-10)
+
+
+### Bug Fixes
+
+* **release:** move only this repository's README refs to the new tag ([#166](https://github.com/nullplatform/actions-nullplatform/issues/166)) ([06c3b94](https://github.com/nullplatform/actions-nullplatform/commit/06c3b94080fb8b5ec43ab59614ebe7182aa13e84))
+* **renovate:** hold npm 0.x minors, bump do_tofu pins, report failed releases ([#163](https://github.com/nullplatform/actions-nullplatform/issues/163)) ([e978203](https://github.com/nullplatform/actions-nullplatform/commit/e97820339a6c0cd52ac615edf5a1805ad0deaf15))
+
 ## [1.8.1](https://github.com/nullplatform/actions-nullplatform/compare/v1.8.0...v1.8.1) (2026-11-02)
 
 
