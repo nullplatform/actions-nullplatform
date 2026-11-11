@@ -57,8 +57,9 @@ name: release-publish-oci
 # organization) variable — the owner NRN for the registered artifact.
 #
 # Package publishing (opt-in): set package_stack_dir to the repository's
-# OpenTofu publish stack and pass package_np_api_key, package_state_role_arn,
-# package_state_bucket and package_state_region; after the artifact is
+# OpenTofu publish stack and pass package_np_api_key, package_state_aws_account_id
+# (or package_state_role_arn), package_state_bucket and package_state_region;
+# after the artifact is
 # registered, publish-package applies the stack at the release tag with the
 # pushed digest (see publish-package.yml for the stack contract). The bucket
 # and its region are secrets, not variables: the caller repositories are
@@ -167,7 +168,10 @@ on:
         description: 'Publisher organization API key for package publishing (required with package_stack_dir)'
         required: false
       package_state_role_arn:
-        description: 'AWS IAM role ARN for the package stack state bucket (required with package_stack_dir)'
+        description: 'AWS IAM role ARN for the package stack state bucket; empty = the repository role by convention (see publish-package.yml)'
+        required: false
+      package_state_aws_account_id:
+        description: 'AWS account of the conventional state role github-actions-<repository>-package-state (with package_stack_dir, unless package_state_role_arn is set)'
         required: false
       package_state_bucket:
         description: 'S3 bucket for the package stack states (required with package_stack_dir; a secret so its name stays out of the public run logs)'
@@ -287,6 +291,7 @@ jobs:
     secrets:
       np_api_key: ${{ secrets.package_np_api_key }}
       state_role_arn: ${{ secrets.package_state_role_arn }}
+      state_aws_account_id: ${{ secrets.package_state_aws_account_id }}
       tfstate_bucket: ${{ secrets.package_state_bucket }}
       tfstate_region: ${{ secrets.package_state_region }}
 

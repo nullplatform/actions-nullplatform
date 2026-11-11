@@ -450,7 +450,8 @@ The standard release pipeline for service repos that ship an OCI image. Chains r
 - `aws_role_arn` (required): AWS IAM Role ARN for OIDC auth against ECR
 - `artifact_np_api_key`: nullplatform API key (required while `register_artifact` is true)
 - `package_np_api_key`: publisher organization API key (required with `package_stack_dir`)
-- `package_state_role_arn`: AWS IAM role ARN for the package stack's state bucket (required with `package_stack_dir`)
+- `package_state_aws_account_id`: AWS account of the repository's state role, `github-actions-<repository>-package-state` (with `package_stack_dir`, unless `package_state_role_arn` is set)
+- `package_state_role_arn`: AWS IAM role ARN for the package stack's state bucket, for a role that does not follow the convention; it wins over the account
 - `package_state_bucket`: S3 bucket for the package stack states (required with `package_stack_dir`)
 - `package_state_region`: region of that bucket (required with `package_stack_dir`)
 
@@ -605,11 +606,12 @@ A published revision is immutable. Re-running a release whose image was rebuilt 
 
 **Secrets**
 - `np_api_key` (required): API key of the publisher organization, allowed to write the specs and packages the stack publishes
-- `state_role_arn` (required): AWS IAM role ARN, assumed with OIDC, with access to the state bucket
+- `state_aws_account_id`: AWS account of the state role. The role is derived from the repository name, `github-actions-<repository>-package-state`
+- `state_role_arn`: AWS IAM role ARN, assumed with OIDC, for a role that does not follow the convention. It wins over the account; one of the two is required
 - `tfstate_bucket` (required): S3 bucket that keeps the stack states
 - `tfstate_region` (required): region of that bucket
 
-The bucket and its region are secrets, not variables, on purpose: the caller repositories are public and so are their run logs, and GitHub masks only secrets. Reads the `NP_ARTIFACT_NRN` repository/organization variable, and fails when it or any secret is empty. It requires the caller to grant `contents: read` and `id-token: write`. State is one S3 object per repository and stack, with native locking (`use_lockfile`).
+Each publishing repository has its own state role, which trusts only that repository's `main` branch and tags and writes only under its own key prefix, so one organization secret with the account serves every repository. The bucket and its region are secrets, not variables, on purpose: the caller repositories are public and so are their run logs, and GitHub masks only secrets. Reads the `NP_ARTIFACT_NRN` repository/organization variable, and fails when it or any secret is empty. It requires the caller to grant `contents: read` and `id-token: write`. State is one S3 object per repository and stack, with native locking (`use_lockfile`).
 
 **Usage** (through `release-publish-oci`)
 
@@ -627,7 +629,8 @@ jobs:
       # The publisher key that registers the artifact also works here, as long
       # as it may write specs and packages.
       package_np_api_key: ${{ secrets.ARTIFACT_NP_API_KEY }}
-      package_state_role_arn: ${{ secrets.AWS_ROLE_ARN_PACKAGE_STATE }}
+      # Organization secrets: the role is github-actions-<repository>-package-state.
+      package_state_aws_account_id: ${{ secrets.PACKAGE_STATE_AWS_ACCOUNT_ID }}
       package_state_bucket: ${{ secrets.PACKAGE_TFSTATE_BUCKET }}
       package_state_region: ${{ secrets.PACKAGE_TFSTATE_REGION }}
 ```
