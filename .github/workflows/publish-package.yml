@@ -27,6 +27,13 @@ name: publish-package
 # are public and so are their run logs, and GitHub masks only secrets. A published revision is immutable: re-running a release whose
 # image was rebuilt (a new digest for the same version) fails at the apply
 # instead of re-pointing the version.
+#
+# State role: each publishing repository has its own role,
+# github-actions-<repository>-package-state, which trusts only that
+# repository's main branch and tags and writes only under its own key prefix.
+# Pass state_aws_account_id (one organization secret for every repository) and
+# the role is derived from the repository name; pass state_role_arn instead for
+# a role that does not follow the convention (it wins when both are set).
 
 on:
   workflow_call:
@@ -73,8 +80,11 @@ on:
         description: 'API key of the publisher organization (NP_ARTIFACT_NRN), allowed to write the specs and packages the stack publishes'
         required: true
       state_role_arn:
-        description: 'AWS IAM role ARN, assumed with OIDC, with access to the state bucket'
-        required: true
+        description: 'AWS IAM role ARN, assumed with OIDC, with access to the state bucket. Empty = github-actions-<repository>-package-state in state_aws_account_id'
+        required: false
+      state_aws_account_id:
+        description: 'AWS account of the conventional state role, used when state_role_arn is empty (a secret for the same reason as the bucket)'
+        required: false
       tfstate_bucket:
         description: 'S3 bucket that keeps the stack states (a secret, so its name never reaches the public run logs)'
         required: true
@@ -101,6 +111,9 @@ jobs:
       TFSTATE_REGION: ${{ secrets.tfstate_region }}
       TFSTATE_KEY: ${{ inputs.state_key || format('{0}/{1}.tfstate', github.event.repository.name, inputs.stack_dir) }}
       TOOLS: ${{ inputs.tools }}
+      # The role the state backend assumes: the explicit one, or the
+      # repository's own role by convention (see the header).
+      STATE_ROLE_ARN: ${{ secrets.state_role_arn || format('arn:aws:iam::{0}:role/github-actions-{1}-package-state', secrets.state_aws_account_id, github.event.repository.name) }}
     steps:
       # Publishing is a declared choice: missing wiring is an error, not a
       # silent skip (a typo'd variable name must not produce a green run).
@@ -111,7 +124,7 @@ jobs:
           # Only whether each secret is set, never its value: a secret the
           # caller references but never created arrives as an empty string.
           HAS_NP_API_KEY: ${{ secrets.np_api_key != '' }}
-          HAS_STATE_ROLE_ARN: ${{ secrets.state_role_arn != '' }}
+          HAS_STATE_ROLE: ${{ secrets.state_role_arn != '' || secrets.state_aws_account_id != '' }}
           HAS_TFSTATE_BUCKET: ${{ secrets.tfstate_bucket != '' }}
           HAS_TFSTATE_REGION: ${{ secrets.tfstate_region != '' }}
         run: |
@@ -121,11 +134,16 @@ jobs:
           fi
           missing=""
           [ "$HAS_NP_API_KEY" = "true" ] || missing="$missing np_api_key"
-          [ "$HAS_STATE_ROLE_ARN" = "true" ] || missing="$missing state_role_arn"
+          [ "$HAS_STATE_ROLE" = "true" ] || missing="$missing state_aws_account_id(or state_role_arn)"
           [ "$HAS_TFSTATE_BUCKET" = "true" ] || missing="$missing tfstate_bucket"
           [ "$HAS_TFSTATE_REGION" = "true" ] || missing="$missing tfstate_region"
           if [ -n "$missing" ]; then
-            echo "::error::package publishing needs the secrets:$missing (release-publish-oci: package_np_api_key, package_state_role_arn, package_state_bucket, package_state_region). Check that the caller passes them and that the repository or organization secrets they reference exist."
+            echo "::error::package publishing needs the secrets:$missing (release-publish-oci: package_np_api_key, package_state_aws_account_id or package_state_role_arn, package_state_bucket, package_state_region). Check that the caller passes them and that the repository or organization secrets they reference exist."
+            exit 1
+          fi
+          # A malformed account would only surface as an opaque AssumeRole error.
+          if ! printf '%s' "$STATE_ROLE_ARN" | grep -Eq '^arn:aws:iam::[0-9]{12}:role/.+$'; then
+            echo "::error::the state role must be an IAM role ARN; with state_aws_account_id, check that it is a 12-digit AWS account id"
             exit 1
           fi
           if ! printf '%s' "$DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
@@ -180,7 +198,7 @@ jobs:
       - name: Configure AWS credentials (tofu state)
         uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
-          role-to-assume: ${{ secrets.state_role_arn }}
+          role-to-assume: ${{ env.STATE_ROLE_ARN }}
           aws-region: ${{ secrets.tfstate_region }}
 
       - name: Setup OpenTofu
