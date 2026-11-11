@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.10.0](https://github.com/nullplatform/actions-nullplatform/compare/v1.9.0...v1.10.0) (2026-11-11)
+
+
+### Features
+
+* **pr-checks-node-npm:** add opt-out lint input ([bf59654](https://github.com/nullplatform/actions-nullplatform/commit/bf59654a3f6ed0a9b55649cc2b1cb7b3d8c453b3))
+* **pr-checks-node-npm:** add opt-out lint input ([6d57f9e](https://github.com/nullplatform/actions-nullplatform/commit/6d57f9e554bb9b14333c75624ed54b1a70a622c4))
+* **publish-package:** derive the state role from the repository name ([e3bfb69](https://github.com/nullplatform/actions-nullplatform/commit/e3bfb69306ce0d6c66ab50ba10dbbeed6676a233))
+* **publish-package:** derive the state role from the repository name ([dfb748d](https://github.com/nullplatform/actions-nullplatform/commit/dfb748d4d5717d3eae4a6c4ec80599c6e272f9c9))
+
 ## [1.9.0](https://github.com/nullplatform/actions-nullplatform/compare/v1.8.2...v1.9.0) (2026-11-10)
 
 
