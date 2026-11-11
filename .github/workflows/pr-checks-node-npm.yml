@@ -13,6 +13,11 @@ on:
         required: false
         type: string
         default: ''
+      lint:
+        description: 'Run the lint step. Set to false to run only the tests.'
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -49,6 +54,7 @@ jobs:
         run: npm ci
 
       - name: Lint
+        if: inputs.lint
         uses: nullplatform/actions-nullplatform/.github/actions/run-first@v1
         with:
           candidates: 'test:static lint'
