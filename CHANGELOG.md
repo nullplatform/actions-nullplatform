@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.11.0](https://github.com/nullplatform/actions-nullplatform/compare/v1.10.0...v1.11.0) (2026-11-12)
+
+
+### Features
+
+* **release-publish-oci:** optional submodules checkout ([a6fb91e](https://github.com/nullplatform/actions-nullplatform/commit/a6fb91e0346c96ac9ead80bf198fa28f85dfd0f2))
+* **release-publish-oci:** optional submodules checkout ([16e7c39](https://github.com/nullplatform/actions-nullplatform/commit/16e7c39b1a80cabc16fbf5cdc54ed98809ec9c92))
+
 ## [1.10.0](https://github.com/nullplatform/actions-nullplatform/compare/v1.9.0...v1.10.0) (2026-11-11)
 
 
