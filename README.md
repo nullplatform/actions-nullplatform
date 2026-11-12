@@ -432,6 +432,7 @@ The standard release pipeline for service repos that ship an OCI image. Chains r
 | image_name | Image name under the registry (e.g. scopes/lambda) | Yes | - |
 | context | Docker build context | No | . |
 | dockerfile | Dockerfile path relative to context | No | Dockerfile |
+| submodules | Check out git submodules before building | No | false |
 | platforms | Target platforms for the multi-arch build | No | linux/amd64,linux/arm64 |
 | ecr_registry | ECR registry URL prefix | No | public.ecr.aws/nullplatform |
 | aws_region | AWS region for ECR | No | us-east-1 |
