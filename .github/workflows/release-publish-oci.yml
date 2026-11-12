@@ -92,6 +92,11 @@ on:
         required: false
         type: string
         default: 'Dockerfile'
+      submodules:
+        description: 'Check out git submodules before building'
+        required: false
+        type: boolean
+        default: false
       platforms:
         description: 'Target platforms for the multi-arch build'
         required: false
@@ -243,6 +248,7 @@ jobs:
       ref: ${{ inputs.existing_tag || '' }}
       context: ${{ inputs.context }}
       dockerfile: ${{ inputs.dockerfile }}
+      submodules: ${{ inputs.submodules }}
       platforms: ${{ inputs.platforms }}
       ecr_registry: ${{ inputs.ecr_registry }}
       aws_region: ${{ inputs.aws_region }}
