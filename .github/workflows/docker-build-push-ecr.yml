@@ -42,7 +42,7 @@ on:
         type: string
         default: ''
       also_tag_latest:
-        description: 'Also tag and push the image as latest'
+        description: 'Also tag and push the image as latest, only when the tag is a stable release and the highest version published'
         required: false
         type: boolean
         default: false
@@ -132,8 +132,30 @@ jobs:
           fi
           TAGS="${REGISTRY}/${IMAGE}:${VERSION}"
 
+          # latest must always point at the newest stable release, so it only
+          # moves when this tag is a stable SemVer (no prerelease or build
+          # metadata) and no higher stable version already exists in the
+          # repository. That keeps a prerelease, or the backfill of an old tag,
+          # from dragging latest backwards.
           if [ "${{ inputs.also_tag_latest }}" = "true" ]; then
-            TAGS="${TAGS},${REGISTRY}/${IMAGE}:latest"
+            STABLE_RE='^v?[0-9]+\.[0-9]+\.[0-9]+$'
+            if [[ ! "${VERSION}" =~ ${STABLE_RE} ]]; then
+              echo "::notice::latest not moved: ${VERSION} is not a stable release"
+            elif ! EXISTING_JSON=$(skopeo list-tags "docker://${REGISTRY}/${IMAGE}"); then
+              # Without the tag list there is no way to tell whether this is the
+              # newest version: publish the version tag and leave latest alone.
+              echo "::warning::latest not moved: could not list the tags of ${REGISTRY}/${IMAGE}"
+            else
+              HIGHEST=$(
+                { jq -r '.Tags[]?' <<< "${EXISTING_JSON}"; echo "${VERSION}"; } \
+                  | grep -E "${STABLE_RE}" | sed 's/^v//' | sort -V | tail -n 1
+              )
+              if [ "${HIGHEST}" = "${VERSION#v}" ]; then
+                TAGS="${TAGS},${REGISTRY}/${IMAGE}:latest"
+              else
+                echo "::notice::latest not moved: ${VERSION} is older than ${HIGHEST}, the highest stable version published"
+              fi
+            fi
           fi
 
           echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
