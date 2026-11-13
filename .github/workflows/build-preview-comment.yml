@@ -1,0 +1,128 @@
+name: build-preview-comment
+
+# Comments a frontend module build on its open pull request: build id, asset,
+# commit, and a link that opens the app with this build loaded through an
+# import-map override. One sticky comment per PR, updated on every build
+# (marker `<!-- nullplatform-build-info -->`, the same one the per-repo copies
+# use, so their existing comments are updated rather than duplicated).
+#
+# Caller (a job after the one that builds and creates the Nullplatform asset,
+# which exposes the build and application ids as outputs):
+#
+#   preview:
+#     needs: build
+#     uses: nullplatform/actions-nullplatform/.github/workflows/build-preview-comment.yml@main
+#     with:
+#       build-id: ${{ needs.build.outputs.build-id }}
+#       application-id: ${{ needs.build.outputs.application-id }}
+#       asset-file: nullplatform-workflow-editor.js
+#       import-map-key: '@nullplatform/workflow-editor'
+#     permissions:
+#       pull-requests: write
+#
+# Builds of main and stage (`skip-branches`) and branches with no open PR are
+# skipped. Commenting is cosmetic: it never fails the caller's run.
+
+on:
+  workflow_call:
+    inputs:
+      build-id:
+        description: 'Nullplatform build id (output of nullplatform/github-action-setup-ci).'
+        required: true
+        type: string
+      application-id:
+        description: 'Nullplatform application id (output of nullplatform/github-action-setup-ci).'
+        required: true
+        type: string
+      asset-file:
+        description: 'Entry file of the module, relative to the build folder (e.g. nullplatform-developers.js).'
+        required: true
+        type: string
+      import-map-key:
+        description: 'Import-map key the host loads the module under (e.g. @nullplatform/developers).'
+        required: true
+        type: string
+      preview-base-url:
+        description: 'App that serves the build folders and honours the ?imo= import-map override.'
+        required: false
+        type: string
+        default: 'https://kwik-e-mart.app.nullplatform.io'
+      skip-branches:
+        description: 'Comma-separated branches whose builds are not commented (deployed builds).'
+        required: false
+        type: string
+        default: 'main,stage'
+
+permissions: {}
+
+jobs:
+  comment:
+    name: Comment build info on PR
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write # find the PR and write the sticky comment
+    steps:
+      - name: Comment build info on PR
+        # Cosmetic: a failure here must not mark a good build as failed.
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_ID: ${{ inputs.build-id }}
+          APP_ID: ${{ inputs.application-id }}
+          ASSET_FILE: ${{ inputs.asset-file }}
+          IMPORT_MAP_KEY: ${{ inputs.import-map-key }}
+          PREVIEW_BASE_URL: ${{ inputs.preview-base-url }}
+          SKIP_BRANCHES: ${{ inputs.skip-branches }}
+        run: |
+          set -euo pipefail
+
+          BRANCH="${GITHUB_REF#refs/heads/}"
+          case ",${SKIP_BRANCHES// /}," in
+            *",${BRANCH},"*) echo "Branch '${BRANCH}' is in skip-branches. Skipping comment."; exit 0 ;;
+          esac
+
+          PR_NUMBER=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --state open --json number --jq '.[0].number')
+          if [ -z "$PR_NUMBER" ]; then
+            echo "No open PR found for branch '${BRANCH}'. Skipping comment."
+            exit 0
+          fi
+
+          # The build folder served over https: what the import map loads, and
+          # a clickable stand-in for the s3:// URL the per-repo copies printed.
+          ASSET_HTTPS_URL="${PREVIEW_BASE_URL}/${APP_ID}/${BUILD_ID}/${ASSET_FILE}"
+          OVERRIDE_JSON=$(jq -n --arg key "$IMPORT_MAP_KEY" --arg url "$ASSET_HTTPS_URL" '{"imports":{($key):$url}}')
+          ENCODED_IMO=$(echo -n "$OVERRIDE_JSON" | jq -sRr @uri)
+          PREVIEW_URL="${PREVIEW_BASE_URL}/?imo=${ENCODED_IMO}"
+          SHORT_SHA="${GITHUB_SHA::7}"
+          COMMIT_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}"
+
+          COMMENT_BODY="<!-- nullplatform-build-info -->
+          ## Nullplatform Build
+
+          | Field | Value |
+          |---|---|
+          | **Build ID** | \`${BUILD_ID}\` |
+          | **Asset URL** | ${ASSET_HTTPS_URL} |
+          | **Commit** | [\`${SHORT_SHA}\`](${COMMIT_URL}) |
+          | **Built at** | $(date -u '+%Y-%m-%d %H:%M:%S UTC') |
+
+          **[:rocket: Preview this build](${PREVIEW_URL})**
+
+          > Opens the app with this build loaded via import-map override (persists in localStorage until cleared via devtools)."
+
+          # All ids first, then the first line: piping into `head -1` would let
+          # gh die of SIGPIPE on a long thread, which pipefail reads as a failure.
+          EXISTING_IDS=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" --paginate \
+            --jq '.[] | select(.body | contains("<!-- nullplatform-build-info -->")) | .id')
+          EXISTING_COMMENT_ID="${EXISTING_IDS%%$'\n'*}"
+
+          if [ -n "$EXISTING_COMMENT_ID" ]; then
+            gh api "repos/${GITHUB_REPOSITORY}/issues/comments/${EXISTING_COMMENT_ID}" \
+              --method PATCH \
+              --field body="$COMMENT_BODY" >/dev/null
+            echo "Updated existing comment ${EXISTING_COMMENT_ID} on PR #${PR_NUMBER}."
+          else
+            gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body "$COMMENT_BODY"
+            echo "Created new comment on PR #${PR_NUMBER}."
+          fi
