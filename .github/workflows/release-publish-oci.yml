@@ -118,7 +118,7 @@ on:
         type: string
         default: ''
       also_tag_latest:
-        description: 'Also tag and push the image as latest'
+        description: 'Also tag and push the image as latest, only when the tag is a stable release and the highest version published'
         required: false
         type: boolean
         default: false

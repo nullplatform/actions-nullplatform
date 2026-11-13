@@ -437,7 +437,7 @@ The standard release pipeline for service repos that ship an OCI image. Chains r
 | ecr_registry | ECR registry URL prefix | No | public.ecr.aws/nullplatform |
 | aws_region | AWS region for ECR | No | us-east-1 |
 | build_args | Docker build arguments (newline-separated) | No | '' |
-| also_tag_latest | Also tag and push the image as latest | No | false |
+| also_tag_latest | Also tag and push the image as latest, only when the tag is a stable release and the highest version published | No | false |
 | release-type | Release Please release type | No | simple |
 | update_readme_versions | Move this repository's own `?ref=vX.Y.Z` references in READMEs to the new tag (refs to other repositories are left alone) | No | false |
 | existing_tag | Skip release-please; publish + finalize this existing tag | No | '' |
