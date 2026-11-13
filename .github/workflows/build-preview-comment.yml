@@ -20,6 +20,8 @@ name: build-preview-comment
 #     permissions:
 #       pull-requests: write
 #
+# `stage-preview-base-url` adds a second link to the same build on stage.
+#
 # Builds of main and stage (`skip-branches`) and branches with no open PR are
 # skipped. Commenting is cosmetic: it never fails the caller's run.
 
@@ -47,6 +49,11 @@ on:
         required: false
         type: string
         default: 'https://kwik-e-mart.app.nullplatform.io'
+      stage-preview-base-url:
+        description: 'Optional second app (e.g. https://kwik-e-mart.stage.nullplatform.io). Set → the comment links a Production and a Stage preview.'
+        required: false
+        type: string
+        default: ''
       skip-branches:
         description: 'Comma-separated branches whose builds are not commented (deployed builds).'
         required: false
@@ -73,6 +80,7 @@ jobs:
           ASSET_FILE: ${{ inputs.asset-file }}
           IMPORT_MAP_KEY: ${{ inputs.import-map-key }}
           PREVIEW_BASE_URL: ${{ inputs.preview-base-url }}
+          STAGE_PREVIEW_BASE_URL: ${{ inputs.stage-preview-base-url }}
           SKIP_BRANCHES: ${{ inputs.skip-branches }}
         run: |
           set -euo pipefail
@@ -88,12 +96,24 @@ jobs:
             exit 0
           fi
 
+          # `<base>/?imo=…`: the app at <base> with this build's entry (served
+          # from the same <base>) in place of the module's import-map entry.
+          preview_url() {
+            local base="$1" asset override
+            asset="${base}/${APP_ID}/${BUILD_ID}/${ASSET_FILE}"
+            override=$(jq -n --arg key "$IMPORT_MAP_KEY" --arg url "$asset" '{"imports":{($key):$url}}')
+            echo "${base}/?imo=$(printf '%s' "$override" | jq -sRr @uri)"
+          }
+
           # The build folder served over https: what the import map loads, and
           # a clickable stand-in for the s3:// URL the per-repo copies printed.
           ASSET_HTTPS_URL="${PREVIEW_BASE_URL}/${APP_ID}/${BUILD_ID}/${ASSET_FILE}"
-          OVERRIDE_JSON=$(jq -n --arg key "$IMPORT_MAP_KEY" --arg url "$ASSET_HTTPS_URL" '{"imports":{($key):$url}}')
-          ENCODED_IMO=$(echo -n "$OVERRIDE_JSON" | jq -sRr @uri)
-          PREVIEW_URL="${PREVIEW_BASE_URL}/?imo=${ENCODED_IMO}"
+          if [ -n "$STAGE_PREVIEW_BASE_URL" ]; then
+            PREVIEW_LINKS="**[:rocket: Preview this build (Production)]($(preview_url "$PREVIEW_BASE_URL"))**
+          **[:test_tube: Preview this build (Stage)]($(preview_url "$STAGE_PREVIEW_BASE_URL"))**"
+          else
+            PREVIEW_LINKS="**[:rocket: Preview this build]($(preview_url "$PREVIEW_BASE_URL"))**"
+          fi
           SHORT_SHA="${GITHUB_SHA::7}"
           COMMIT_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}"
 
@@ -107,7 +127,7 @@ jobs:
           | **Commit** | [\`${SHORT_SHA}\`](${COMMIT_URL}) |
           | **Built at** | $(date -u '+%Y-%m-%d %H:%M:%S UTC') |
 
-          **[:rocket: Preview this build](${PREVIEW_URL})**
+          ${PREVIEW_LINKS}
 
           > Opens the app with this build loaded via import-map override (persists in localStorage until cleared via devtools)."
 
