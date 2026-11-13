@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.12.0](https://github.com/nullplatform/actions-nullplatform/compare/v1.11.0...v1.12.0) (2026-11-13)
+
+
+### Features
+
+* **ci-command:** add /ci and build preview comment workflows ([dbf0c94](https://github.com/nullplatform/actions-nullplatform/commit/dbf0c94010649af50fa8867fa144dbff2d09c688))
+* **ci-command:** add /ci and build preview comment workflows ([8f524d5](https://github.com/nullplatform/actions-nullplatform/commit/8f524d5533beb47366cc7f88bb7172ff193f9694))
+* **docker-build-push-ecr:** only move latest for the highest stable release ([#174](https://github.com/nullplatform/actions-nullplatform/issues/174)) ([68eb192](https://github.com/nullplatform/actions-nullplatform/commit/68eb19223ec121a24da3260900ecab55132d9cfa))
+
 ## [1.11.0](https://github.com/nullplatform/actions-nullplatform/compare/v1.10.0...v1.11.0) (2026-11-12)
 
 
