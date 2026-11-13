@@ -1,0 +1,129 @@
+name: ci-command
+
+# `/ci` in a pull request comment dispatches the caller's build workflow on the
+# PR branch. Plain dispatch job — no LLM involved.
+#
+# Why: a repo's build usually runs on push to a few branches only (main, feat/**,
+# ...). `/ci` builds any PR branch on demand — and, with build-preview-comment,
+# leaves a link to try that build in the app.
+#
+# Caller (`.github/workflows/ci-command.yml` in the frontend repo):
+#
+#   name: CI Build Command (/ci)
+#   on:
+#     issue_comment:
+#       types: [created]
+#   jobs:
+#     ci:
+#       uses: nullplatform/actions-nullplatform/.github/workflows/ci-command.yml@main
+#       with:
+#         workflow: ci.yml
+#       permissions:
+#         contents: read
+#         pull-requests: write
+#         actions: write
+#
+# The dispatched workflow must have a `workflow_dispatch` trigger, and the PR
+# branch must already contain it: `gh workflow run --ref` runs the workflow file
+# as it is on that branch. GitHub reads `issue_comment` workflows from the
+# default branch, so the caller only answers once it is merged.
+
+on:
+  workflow_call:
+    inputs:
+      workflow:
+        description: 'Build workflow file in the CALLING repo to dispatch on the PR branch (e.g. ci.yml). Needs a workflow_dispatch trigger.'
+        required: true
+        type: string
+      allowed_associations:
+        description: 'Comma-separated author_association values allowed to run /ci. Anyone else is ignored.'
+        required: false
+        type: string
+        default: 'OWNER,MEMBER,COLLABORATOR'
+
+permissions: {}
+
+jobs:
+  dispatch:
+    name: Trigger CI build (/ci)
+    # Cheap filter first: every comment on every issue and PR reaches the caller,
+    # and this keeps a runner from starting for any comment that is not `/ci`.
+    if: |
+      github.event_name == 'issue_comment' &&
+      github.event.action == 'created' &&
+      github.event.issue.pull_request &&
+      github.event.comment.user.type != 'Bot' &&
+      startsWith(github.event.comment.body, '/ci')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    concurrency:
+      group: ci-command-${{ github.repository }}-${{ github.event.issue.number }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      pull-requests: write # react to the command and comment on the PR
+      actions: write # gh workflow run
+    steps:
+      - name: Check who asked
+        id: gate
+        env:
+          ASSOC: ${{ github.event.comment.author_association }}
+          ALLOWED: ${{ inputs.allowed_associations }}
+        run: |
+          set -euo pipefail
+          # Spaces dropped, so 'OWNER, MEMBER' does not silently shut MEMBER out.
+          case ",${ALLOWED// /}," in
+            *",${ASSOC},"*) echo "allowed=true" >>"$GITHUB_OUTPUT" ;;
+            *)
+              # Silent, like the per-repo copies this replaces.
+              echo "author_association '${ASSOC}' may not run /ci — ignoring."
+              echo "allowed=false" >>"$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: React to the command
+        if: steps.gate.outputs.allowed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+        run: |
+          gh api "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}/reactions" \
+            -X POST -f content=eyes >/dev/null || true
+
+      - name: Resolve PR branch and dispatch build
+        if: steps.gate.outputs.allowed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          WORKFLOW: ${{ inputs.workflow }}
+        run: |
+          set -euo pipefail
+
+          PR_JSON=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json headRefName,isCrossRepository)
+          BRANCH=$(jq -r .headRefName <<<"$PR_JSON")
+          IS_FORK=$(jq -r .isCrossRepository <<<"$PR_JSON")
+
+          # --ref always resolves against the base repo, so a fork PR would build
+          # whichever base branch shares the fork's branch name — possibly main,
+          # which builds production assets.
+          if [ "$IS_FORK" = "true" ]; then
+            echo "::error::PR #${PR_NUMBER} comes from a fork; refusing to dispatch."
+            exit 1
+          fi
+
+          echo "Dispatching ${WORKFLOW} on branch: ${BRANCH}"
+          gh workflow run "$WORKFLOW" --repo "$GITHUB_REPOSITORY" --ref "$BRANCH"
+
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/workflows/${WORKFLOW}"
+          gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" \
+            --body "🏗️ Dispatched \`${WORKFLOW}\` on branch \`${BRANCH}\`. Track progress in [Actions](${RUN_URL}); the build preview will appear on this PR once it finishes."
+
+      - name: Report dispatch failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          WORKFLOW: ${{ inputs.workflow }}
+        run: |
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" \
+            --body "❌ \`/ci\` could not dispatch \`${WORKFLOW}\` — see the [command run](${RUN_URL}). Usual causes: the branch predates the \`workflow_dispatch\` trigger (bring \`main\` into it), or the PR comes from a fork."
