@@ -45,7 +45,7 @@ module.exports = {
   requireConfig: 'optional',
   // Only command a repo-level postUpgradeTasks may run (customers-aws-image bumps its image tag when the base moves).
   allowedCommands: ['^node scripts/bump-nginx-tag\\.js$'],
-  dependencyDashboard: false,
+  dependencyDashboard: { enabled: false },
 
   // Only the managers below. No npm, no go.mod, no docker FROM: those layers are
   // owned elsewhere (Dependabot / the base-image work), and this must never open
