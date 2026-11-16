@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.13.0](https://github.com/nullplatform/actions-nullplatform/compare/v1.12.0...v1.13.0) (2026-11-16)
+
+
+### Features
+
+* **release-publish-oci:** tag latest by default ([#178](https://github.com/nullplatform/actions-nullplatform/issues/178)) ([0296a11](https://github.com/nullplatform/actions-nullplatform/commit/0296a110bba3284b6593beafda7c8097b00bc7f0))
+
+
+### Bug Fixes
+
+* **release:** update README versions on the release PR instead of pushing to the default branch ([#179](https://github.com/nullplatform/actions-nullplatform/issues/179)) ([b83330c](https://github.com/nullplatform/actions-nullplatform/commit/b83330c0e91d1cf41eff3aea55d2f0b3849fb7c0))
+
 ## [1.12.0](https://github.com/nullplatform/actions-nullplatform/compare/v1.11.0...v1.12.0) (2026-11-13)
 
 
