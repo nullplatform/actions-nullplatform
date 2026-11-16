@@ -121,7 +121,7 @@ on:
         description: 'Also tag and push the image as latest, only when the tag is a stable release and the highest version published'
         required: false
         type: boolean
-        default: false
+        default: true
       release-type:
         description: 'Release Please release type (kebab-case inherited from release.yml)'
         required: false
