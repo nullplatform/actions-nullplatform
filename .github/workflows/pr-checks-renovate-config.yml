@@ -37,4 +37,11 @@ jobs:
             exit 1
           fi
           echo "validating renovate-config.js with renovate@${version} (default of action ${ref})"
-          npx -y -p "renovate@${version}" renovate-config-validator --strict renovate-config.js
+          # Not --strict: the action's default is a floating major, so a Renovate minor can start
+          # asking for a config migration at any time. Renovate applies migrations by itself at
+          # run time, so a pending one is reported as a warning instead of failing whichever
+          # unrelated PR happens to touch these paths next. Real config errors still fail.
+          npx -y -p "renovate@${version}" renovate-config-validator renovate-config.js 2>&1 | tee validator.log
+          if grep -q 'Config migration necessary' validator.log; then
+            echo "::warning file=renovate-config.js::Renovate ${version} asks for a config migration (diff in this step's log). The scheduled run still works; apply the migration when convenient."
+          fi
