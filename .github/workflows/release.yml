@@ -51,23 +51,74 @@ jobs:
         with:
           release-type: ${{ inputs.release-type }}
 
+  # Moves this repository's own `?ref=vX.Y.Z` README references to the version
+  # being released.
+  #
+  # It runs on the release PR, not after the release: while release-please has
+  # its PR open, the bump is committed onto the PR branch, so it lands on the
+  # default branch through the PR merge and the tag already carries a README
+  # that points at itself. Pushing the bump straight to the default branch
+  # after the release (the previous behaviour) is rejected with GH013 wherever
+  # a ruleset requires pull requests, which left a red run on a release that
+  # had in fact published.
+  #
+  # The post-release push stays as a fallback for the case the PR was merged
+  # before this job could amend it; when the PR already carried the bump there
+  # is nothing to commit and nothing is pushed.
   update-readme-versions:
     name: Update README Versions
     needs: release
-    if: ${{ needs.release.outputs.release_created == 'true' && inputs.update_readme_versions }}
+    if: ${{ inputs.update_readme_versions }}
     runs-on: ubuntu-24.04
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
+      - name: Resolve the branch and version to update
+        id: target
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_CREATED: ${{ needs.release.outputs.release_created }}
+          TAG_NAME: ${{ needs.release.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          if [ "$RELEASE_CREATED" = "true" ]; then
+            echo "release $TAG_NAME was just cut: checking $GITHUB_REF_NAME (fallback)"
+            { echo "mode=released"; echo "ref=$GITHUB_REF_NAME"; echo "version=$TAG_NAME"; } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # The single-package release PR. A manifest release with several
+          # components uses other branch names and titles: it is left to the
+          # post-release fallback.
+          BRANCH="release-please--branches--${GITHUB_REF_NAME}"
+          TITLE=$(gh api "repos/${GITHUB_REPOSITORY}/pulls" -X GET -f state=open \
+                    -f "head=${GITHUB_REPOSITORY_OWNER}:${BRANCH}" \
+                  | jq -r '[.[] | select([.labels[].name] | index("autorelease: pending"))] | .[0].title // empty')
+          if [ -z "$TITLE" ]; then
+            echo "no open release PR on $BRANCH; nothing to update"
+            echo "mode=none" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          VERSION=$(printf '%s' "$TITLE" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | tail -1 || true)
+          if [ -z "$VERSION" ]; then
+            echo "::warning::could not read the version from the release PR title '$TITLE'; READMEs are left for the post-release run"
+            echo "mode=none" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "release PR '$TITLE': updating READMEs on $BRANCH to v$VERSION"
+          { echo "mode=release-pr"; echo "ref=$BRANCH"; echo "version=v$VERSION"; } >> "$GITHUB_OUTPUT"
+
       - name: Checkout
+        if: ${{ steps.target.outputs.mode != 'none' }}
         uses: actions/checkout@v7
         with:
-          fetch-depth: 0
+          ref: ${{ steps.target.outputs.ref }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Update this repository's README versions
+        if: ${{ steps.target.outputs.mode != 'none' }}
         env:
-          NEW_VERSION: ${{ needs.release.outputs.tag_name }}
+          NEW_VERSION: ${{ steps.target.outputs.version }}
         run: |
           # Only references to THIS repository move to the new tag. A README
           # may also pin other repositories (a service README showing the
@@ -87,9 +138,13 @@ jobs:
           done
 
       - name: Commit and push
+        if: ${{ steps.target.outputs.mode != 'none' }}
+        env:
+          HUSKY: 0
+          MODE: ${{ steps.target.outputs.mode }}
+          TARGET_REF: ${{ steps.target.outputs.ref }}
+          VERSION: ${{ steps.target.outputs.version }}
         run: |
-          VERSION="${{ needs.release.outputs.tag_name }}"
-
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
 
@@ -97,9 +152,19 @@ jobs:
 
           if git diff --staged --quiet; then
             echo "No changes to commit"
+            exit 0
+          fi
+
+          if [ "$MODE" = "release-pr" ]; then
+            git commit -m "docs: update README refs to $VERSION"
+            # Never fail the run here: the release PR is merged from this
+            # run's success, and a README that could not be amended (the
+            # branch moved under a concurrent run) is picked up by the next
+            # run or by the post-release fallback.
+            if ! git push origin "HEAD:${TARGET_REF}"; then
+              echo "::warning::could not push the README update to ${TARGET_REF}; the next release run retries it"
+            fi
           else
             git commit -m "docs: update all module READMEs to $VERSION [skip ci]"
-            git push
+            git push origin "HEAD:${TARGET_REF}"
           fi
-        env:
-          HUSKY: 0
