@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.13.1](https://github.com/nullplatform/actions-nullplatform/compare/v1.13.0...v1.13.1) (2026-11-16)
+
+
+### Bug Fixes
+
+* **deps:** bump renovatebot/github-action ([#165](https://github.com/nullplatform/actions-nullplatform/issues/165)) ([64d2802](https://github.com/nullplatform/actions-nullplatform/commit/64d28028cc81131c28061c9fd88bff690ad8101a))
+* **renovate:** migrate dependencyDashboard and stop failing PRs on pending migrations ([#181](https://github.com/nullplatform/actions-nullplatform/issues/181)) ([6c4f23d](https://github.com/nullplatform/actions-nullplatform/commit/6c4f23d805e35a49856626d5a075a70a9f5253b3))
+
 ## [1.13.0](https://github.com/nullplatform/actions-nullplatform/compare/v1.12.0...v1.13.0) (2026-11-16)
 
 
