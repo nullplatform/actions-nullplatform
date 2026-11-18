@@ -105,8 +105,15 @@ jobs:
           PR_NUMBER: ${{ needs.resolve.outputs.pr_number }}
         run: |
           # Held runs register no check runs, so the wait below cannot see them.
-          SHA="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq .head.sha)"
-          HELD="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${SHA}&status=action_required" --jq '[.workflow_runs[].name] | join(", ")')"
+          # Informational only: a failed query (the App may lack actions: read) never blocks the merge.
+          if ! SHA="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq .head.sha 2>/dev/null)" || [ -z "$SHA" ]; then
+            echo "could not read the head of PR #${PR_NUMBER}; skipping the held-runs report"
+            exit 0
+          fi
+          if ! HELD="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${SHA}&status=action_required" --jq '[.workflow_runs[].name] | join(", ")' 2>/dev/null)"; then
+            echo "could not list the workflow runs of ${SHA:0:7}; skipping the held-runs report"
+            exit 0
+          fi
           if [ -n "$HELD" ]; then
             echo "::warning::PR #${PR_NUMBER} has workflow runs waiting for approval that will not run before this merge: ${HELD}. Open the release PR with a GitHub App token (release.yml secrets app-id/app-private-key)."
           fi
