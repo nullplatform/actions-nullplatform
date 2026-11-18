@@ -104,6 +104,11 @@ on:
         required: false
         type: string
         default: 'linux/amd64,linux/arm64'
+      native_runners:
+        description: 'Build each platform on a runner of its own architecture instead of emulating it with QEMU (linux/amd64 and linux/arm64 only). For images that compile code'
+        required: false
+        type: boolean
+        default: false
       ecr_registry:
         description: 'ECR registry URL prefix'
         required: false
@@ -261,6 +266,7 @@ jobs:
       dockerfile: ${{ inputs.dockerfile }}
       submodules: ${{ inputs.submodules }}
       platforms: ${{ inputs.platforms }}
+      native_runners: ${{ inputs.native_runners }}
       ecr_registry: ${{ inputs.ecr_registry }}
       aws_region: ${{ inputs.aws_region }}
       build_args: ${{ inputs.build_args }}

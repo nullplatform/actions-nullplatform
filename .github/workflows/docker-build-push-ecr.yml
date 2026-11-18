@@ -56,6 +56,11 @@ on:
         required: false
         type: string
         default: ''
+      native_runners:
+        description: 'Build each platform on a runner of its own architecture and join the results in one manifest, instead of emulating the foreign platform with QEMU. Supports linux/amd64 and linux/arm64'
+        required: false
+        type: boolean
+        default: false
     outputs:
       image_digest:
         description: 'OCI image-index digest (sha256:...)'
@@ -72,9 +77,125 @@ permissions:
   id-token: write
   contents: read
 
+# Two ways to build, chosen by native_runners:
+#
+#   false (default): one job builds every platform on an amd64 runner, emulating
+#     the others with QEMU. Fine for images that only install packages; an image
+#     that compiles code spends most of the run in the emulated platform.
+#   true: one job per platform on a runner of that architecture pushes the image
+#     by digest, without a tag, and "Build and Push" joins the digests in one
+#     manifest and tags it. Nothing is tagged until every platform is built.
+#
+# Either way "Build and Push" is the job that generates the tags and reports the
+# digest, so the tag and latest rules live in one place.
 jobs:
+  plan-native:
+    name: Plan native builds
+    if: ${{ inputs.native_runners }}
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      count: ${{ steps.matrix.outputs.count }}
+    steps:
+      - name: Map platforms to runners
+        id: matrix
+        env:
+          PLATFORMS: ${{ inputs.platforms }}
+        run: |
+          set -euo pipefail
+          MATRIX='[]'
+          IFS=',' read -ra LIST <<< "${PLATFORMS}"
+          for RAW in "${LIST[@]}"; do
+            PLATFORM="${RAW// /}"
+            case "${PLATFORM}" in
+              linux/amd64) RUNNER="ubuntu-24.04"; ARCH="amd64" ;;
+              linux/arm64) RUNNER="ubuntu-24.04-arm"; ARCH="arm64" ;;
+              *)
+                echo "::error::native_runners supports linux/amd64 and linux/arm64, not '${PLATFORM}'"
+                exit 1
+                ;;
+            esac
+            MATRIX=$(jq -c --arg platform "${PLATFORM}" --arg runner "${RUNNER}" --arg arch "${ARCH}" \
+              '. + [{platform: $platform, runner: $runner, arch: $arch}]' <<< "${MATRIX}")
+          done
+          # A platform listed twice would be built twice and leave one digest out of the count.
+          if [ "$(jq 'length' <<< "${MATRIX}")" != "$(jq '[.[].arch] | unique | length' <<< "${MATRIX}")" ]; then
+            echo "::error::platforms lists a platform more than once: ${PLATFORMS}"
+            exit 1
+          fi
+          echo "matrix=${MATRIX}" >> "$GITHUB_OUTPUT"
+          echo "count=$(jq 'length' <<< "${MATRIX}")" >> "$GITHUB_OUTPUT"
+
+  build-native:
+    # GitHub appends the matrix values; a plain name also reads well when the job is skipped.
+    name: Build native
+    needs: plan-native
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      # A platform that fails leaves no image to publish: stop the others.
+      fail-fast: true
+      matrix:
+        include: ${{ fromJSON(needs.plan-native.outputs.matrix) }}
+    # Each matrix job sets only the output of its own architecture.
+    outputs:
+      digest_amd64: ${{ steps.digest.outputs.digest_amd64 }}
+      digest_arm64: ${{ steps.digest.outputs.digest_arm64 }}
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          submodules: ${{ inputs.submodules }}
+          ref: ${{ inputs.ref }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.aws_role_arn }}
+          aws-region: ${{ inputs.aws_region }}
+
+      - name: Login to Amazon ECR Public
+        uses: aws-actions/amazon-ecr-login@v2
+        with:
+          registry-type: public
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ inputs.context }}
+          file: ${{ inputs.context }}/${{ inputs.dockerfile }}
+          platforms: ${{ matrix.platform }}
+          build-args: ${{ inputs.build_args }}
+          # No tag: the image is only reachable by digest until the manifest is created.
+          outputs: type=image,name=${{ inputs.ecr_registry }}/${{ inputs.image_name }},push-by-digest=true,name-canonical=true,push=true
+          # One cache per image and architecture: the platforms build in parallel and would overwrite a shared one.
+          cache-from: type=gha,scope=${{ inputs.image_name }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ inputs.image_name }}-${{ matrix.arch }}
+
+      - name: Export digest
+        id: digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          if [[ -z "${DIGEST}" ]]; then
+            echo "::error::digest missing from build output"
+            exit 1
+          fi
+          echo "digest_${ARCH}=${DIGEST}" >> "$GITHUB_OUTPUT"
+
   build-and-push:
     name: Build and Push
+    needs: [plan-native, build-native]
+    # The native jobs are skipped by default, and a job whose needs were skipped is skipped too
+    # unless it says otherwise. With native_runners every platform must have been built.
+    if: ${{ !cancelled() && (!inputs.native_runners || needs.build-native.result == 'success') }}
     runs-on: ubuntu-24.04
     outputs:
       digest: ${{ steps.digest.outputs.digest }}
@@ -84,6 +205,7 @@ jobs:
 
     steps:
       - name: Checkout repository
+        if: ${{ !inputs.native_runners }}
         uses: actions/checkout@v7
         with:
           submodules: ${{ inputs.submodules }}
@@ -92,6 +214,7 @@ jobs:
           ref: ${{ inputs.ref }}
 
       - name: Set up QEMU
+        if: ${{ !inputs.native_runners }}
         uses: docker/setup-qemu-action@v4
 
       - name: Set up Docker Buildx
@@ -164,6 +287,7 @@ jobs:
 
       - name: Build and push Docker image
         id: build
+        if: ${{ !inputs.native_runners }}
         uses: docker/build-push-action@v7
         with:
           context: ${{ inputs.context }}
@@ -176,10 +300,38 @@ jobs:
           cache-from: type=gha,scope=${{ inputs.image_name }}
           cache-to: type=gha,mode=max,scope=${{ inputs.image_name }}
 
+      - name: Create multi-arch manifest
+        id: manifest
+        if: ${{ inputs.native_runners }}
+        env:
+          IMAGE: ${{ inputs.ecr_registry }}/${{ inputs.image_name }}
+          TAGS: ${{ steps.tags.outputs.tags }}
+          DIGESTS: ${{ needs.build-native.outputs.digest_amd64 }} ${{ needs.build-native.outputs.digest_arm64 }}
+          EXPECTED: ${{ needs.plan-native.outputs.count }}
+        run: |
+          set -euo pipefail
+          SOURCES=()
+          for DIGEST in ${DIGESTS}; do
+            SOURCES+=("${IMAGE}@${DIGEST}")
+          done
+          # A platform whose digest did not arrive would be missing from the image without any error.
+          if [ "${#SOURCES[@]}" != "${EXPECTED}" ]; then
+            echo "::error::expected ${EXPECTED} platform digests, got ${#SOURCES[@]}"
+            exit 1
+          fi
+          TAG_ARGS=()
+          IFS=',' read -ra TAG_LIST <<< "${TAGS}"
+          for TAG in "${TAG_LIST[@]}"; do
+            TAG_ARGS+=(--tag "${TAG}")
+          done
+          docker buildx imagetools create "${TAG_ARGS[@]}" "${SOURCES[@]}"
+          DIGEST=$(docker buildx imagetools inspect "${TAG_LIST[0]}" --format '{{json .Manifest}}' | jq -r '.digest')
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+
       - name: Extract image digest
         id: digest
         run: |
-          DIGEST="${{ steps.build.outputs.digest }}"
+          DIGEST="${{ steps.build.outputs.digest || steps.manifest.outputs.digest }}"
           if [[ -z "$DIGEST" ]]; then
             echo "::error::digest missing from build output"
             exit 1

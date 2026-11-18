@@ -235,6 +235,7 @@ Builds multi-architecture Docker images and pushes them to Amazon ECR Public. Su
 | context | Build context directory | Yes | - |
 | dockerfile | Path to Dockerfile relative to context | No | Dockerfile |
 | platforms | Target platforms for multi-arch build | No | linux/amd64,linux/arm64 |
+| native_runners | Build each platform on a runner of its own architecture and join the results in one manifest, instead of emulating the foreign platform with QEMU. Supports linux/amd64 and linux/arm64 | No | false |
 | ecr_registry | ECR registry URL | No | public.ecr.aws/nullplatform |
 | tag | Additional tag for the image (latest and sha are always added) | No | '' |
 | aws_region | AWS region for ECR | No | us-east-1 |
@@ -434,6 +435,7 @@ The standard release pipeline for service repos that ship an OCI image. Chains r
 | dockerfile | Dockerfile path relative to context | No | Dockerfile |
 | submodules | Check out git submodules before building | No | false |
 | platforms | Target platforms for the multi-arch build | No | linux/amd64,linux/arm64 |
+| native_runners | Build each platform on a runner of its own architecture instead of emulating it with QEMU (linux/amd64 and linux/arm64 only). For images that compile code | No | false |
 | ecr_registry | ECR registry URL prefix | No | public.ecr.aws/nullplatform |
 | aws_region | AWS region for ECR | No | us-east-1 |
 | build_args | Docker build arguments (newline-separated) | No | '' |
@@ -513,6 +515,7 @@ Fork pull requests and `pull_request_target` are refused, so fork code never run
 | dockerfile | Dockerfile path relative to context | No | Dockerfile |
 | submodules | Check out git submodules before building | No | false |
 | platforms | Target platforms for the multi-arch build | No | linux/amd64,linux/arm64 |
+| native_runners | Build each platform on a runner of its own architecture instead of emulating it with QEMU (linux/amd64 and linux/arm64 only). For images that compile code | No | false |
 | ecr_registry | ECR registry URL prefix | No | public.ecr.aws/nullplatform |
 | aws_region | AWS region for ECR | No | us-east-1 |
 | build_args | Docker build arguments (newline-separated) | No | '' |
