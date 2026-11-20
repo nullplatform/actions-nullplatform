@@ -369,9 +369,12 @@ jobs:
               --jq "[.[] | select(.tag_name==\"$TAG\")][0].id // empty")
           fi
 
+          # One section per image, titled by the image name: a repository that
+          # ships several images runs this chain once per image against the same
+          # tag, and each run must keep the others' sections.
           # shellcheck disable=SC2016  # backticks are markdown, not command substitution
-          SECTION=$(printf '## Artifact\n\n|  |  |\n|---|---|\n| Image | `%s` |\n| Digest | `%s` |\n| Pinned reference | `%s` |\n| Artifact ID | `%s` |' \
-            "$IMAGE:$IMAGE_TAG" "$DIGEST" "$IMAGE@$DIGEST" "$ID_ROW")
+          SECTION=$(printf '## Artifact (%s)\n\n|  |  |\n|---|---|\n| Image | `%s` |\n| Digest | `%s` |\n| Pinned reference | `%s` |\n| Artifact ID | `%s` |' \
+            "$IMAGE_NAME" "$IMAGE:$IMAGE_TAG" "$DIGEST" "$IMAGE@$DIGEST" "$ID_ROW")
 
           if [ -z "$RELEASE_ID" ]; then
             gh release create "$TAG" --title "$TAG" --notes "$SECTION" --verify-tag
@@ -379,13 +382,22 @@ jobs:
             exit 0
           fi
 
-          # Replace, never append: every re-run (failed registration, backfill)
-          # rebuilds the image and gets a new digest, so a digest-based skip
-          # never matches and the release accumulates one '## Artifact' block
-          # per attempt. Drop everything from the first '## Artifact' on (same
-          # cut the changelog step uses) and write the current block once.
+          # Replace this image's section, never append it: every re-run (failed
+          # registration, backfill) rebuilds the image and gets a new digest, so
+          # a digest-based skip never matches and the release would accumulate
+          # one block per attempt. The notes are the release-please text, then
+          # one '## Artifact (<image>)' block per image: keep the text and the
+          # OTHER images' blocks, drop this image's block and any untitled
+          # '## Artifact' block (written by this workflow before the sections
+          # were titled, so always this chain's own), and write the current
+          # block once at the end.
           BODY=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" --jq '.body // ""' \
-            | sed '/^## Artifact/,$d')
+            | awk -v mine="## Artifact ($IMAGE_NAME)" '
+                /^## Artifact/ { keep = ($0 != mine && $0 != "## Artifact") }
+                !/^## Artifact/ && !inblock { print; next }
+                /^## Artifact/ { inblock = 1 }
+                keep { print }
+              ' | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}')
           if [ -n "$BODY" ]; then
             BODY=$(printf '%s\n\n%s' "$BODY" "$SECTION")
           else
