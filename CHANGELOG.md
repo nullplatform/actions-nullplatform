@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.14.0](https://github.com/nullplatform/actions-nullplatform/compare/v1.13.1...v1.14.0) (2026-11-20)
+
+
+### Features
+
+* **docker-build-push-ecr:** build each platform on a native runner ([#184](https://github.com/nullplatform/actions-nullplatform/issues/184)) ([86d698c](https://github.com/nullplatform/actions-nullplatform/commit/86d698c6e59037cb2d535e6a47292bf5778121e4))
+* **release:** open the release PR with a GitHub App token ([#139](https://github.com/nullplatform/actions-nullplatform/issues/139)) ([f933d3c](https://github.com/nullplatform/actions-nullplatform/commit/f933d3c949861cf6f233a9c5ba966ed05b770260))
+
+
+### Bug Fixes
+
+* **auto-merge-release:** bump create-github-app-token to v3 ([e0185fe](https://github.com/nullplatform/actions-nullplatform/commit/e0185fe6804be01907fcf45dfd181348557a5d37))
+* **release-publish-oci:** keep one artifact section per image in the release notes ([2804e4a](https://github.com/nullplatform/actions-nullplatform/commit/2804e4a9f162c6d45ebb1eba528508e69e28e56a))
+* **release-publish-oci:** keep one artifact section per image in the release notes ([8b35af7](https://github.com/nullplatform/actions-nullplatform/commit/8b35af7d10897f8c252c299c668ca445486d437d))
+
 ## [1.13.1](https://github.com/nullplatform/actions-nullplatform/compare/v1.13.0...v1.13.1) (2026-11-16)
 
 
